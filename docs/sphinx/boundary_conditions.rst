@@ -217,7 +217,12 @@ drift (see `binormal_exb_drift`), set ``exb_drift`` to the name of the drift com
 condition is then imposed on the total velocity normal to the target,
 :math:`|v_{||} + v_E/\Theta| \geq c_s`, rather than on :math:`v_{||}` alone. The sheath potential
 and the heat fluxes use this total flux, and the parallel velocities of ions and electrons at the
-sheath entrance are set to :math:`v_{||} = u - v_E/\Theta` (so that :math:`J_{||} = 0`):
+sheath entrance are set to :math:`v_{||} = u - v_E/\Theta` (so that :math:`J_{||} = 0`).
+The ion heat transmission coefficient assumes that ions arrive with kinetic energy
+:math:`\frac{1}{2}m u^2`; with the drift their parallel velocity differs from :math:`u`, so the total
+ion energy flux is :math:`\left[\gamma_i T_i + \frac{1}{2}m_i\left(v_{||}^2 - u^2\right)\right] n u`
+(unchanged without drift). The energy carried through the target by the drift component
+(:math:`\frac{5}{2} p w` and :math:`\frac{1}{2} m n v_{||}^2 w`) is subtracted from the sheath sink:
 
 .. code-block:: ini
 

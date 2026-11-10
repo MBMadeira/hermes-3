@@ -381,6 +381,8 @@ if(HERMES_TESTS)
 
   hermes_add_integrated_test(1D-density CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-binormal-exb-drift CONFLICTS BOUT_USE_METRIC_3D)
+  hermes_add_integrated_test(1D-binormal-exb-drift-pressure CONFLICTS
+                             BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-fluid CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling-dthe CONFLICTS BOUT_USE_METRIC_3D)

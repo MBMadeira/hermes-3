@@ -153,8 +153,11 @@ SheathBoundarySimple::SheathBoundarySimple(std::string name, Options& alloptions
           .withDefault<std::string>("");
   use_exb_drift = !exb_drift_name.empty();
   if (use_exb_drift) {
-    exb_W = toFieldAligned(
-        binormalExBParallelVelocity(alloptions[exb_drift_name], alloptions["units"]));
+    const BinormalExBSettings exb =
+        readBinormalExBSettings(alloptions[exb_drift_name], alloptions["units"]);
+    exb_W = toFieldAligned(exb.W);
+    exb_energy_advection = exb.energy_advection;
+    exb_momentum_advection = exb.momentum_advection;
   } else {
     exb_W = toFieldAligned(Field3D(0.0));
   }
@@ -410,15 +413,17 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
         }
 
         // Parallel velocity at the sheath entrance (= vesheath without drift)
-        const BoutReal vepar = vesheath - 0.5 * (exb_W[i] + exb_W[im]);
+        const BoutReal wesheath = 0.5 * (exb_W[i] + exb_W[im]);
+        const BoutReal vepar = vesheath - wesheath;
 
         Ve[im] = 2 * vepar - Ve[i];
         NVe[im] = 2 * Me * nesheath * vepar - NVe[i];
 
         // Take into account the flow of energy due to fluid flow
         // This is additional energy flux through the sheath
-        // Note: The energy advected by the binormal drift is not yet subtracted
         q -= (2.5 * tesheath + 0.5 * Me * SQ(vepar)) * nesheath * vepar;
+        // Energy carried through the target by the binormal drift
+        q -= binormalDriftEnergyFlux(tesheath, nesheath, vepar, Me, wesheath);
 
         // Cross-sectional area in XZ plane and cell volume
         BoutReal da = (coord->J()[i] + coord->J()[im])
@@ -482,15 +487,17 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
         }
 
         // Parallel velocity at the sheath entrance (= vesheath without drift)
-        const BoutReal vepar = vesheath - 0.5 * (exb_W[i] + exb_W[ip]);
+        const BoutReal wesheath = 0.5 * (exb_W[i] + exb_W[ip]);
+        const BoutReal vepar = vesheath - wesheath;
 
         Ve[ip] = 2 * vepar - Ve[i];
         NVe[ip] = 2. * Me * nesheath * vepar - NVe[i];
 
         // Take into account the flow of energy due to fluid flow
         // This is additional energy flux through the sheath
-        // Note: The energy advected by the binormal drift is not yet subtracted
         q -= (2.5 * tesheath + 0.5 * Me * SQ(vepar)) * nesheath * vepar;
+        // Energy carried through the target by the binormal drift
+        q -= binormalDriftEnergyFlux(tesheath, nesheath, vepar, Me, wesheath);
 
         // Cross-sectional area in XZ plane and cell volume
         BoutReal da = (coord->J()[i] + coord->J()[ip])
@@ -631,7 +638,11 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
           BoutReal usheath = std::min(Vi[i] + wsheath, -sqrt(C_i_sq));
 
           // Note: Here this is negative because usheath < 0
-          BoutReal q = gamma_i * tisheath * nisheath * usheath;
+          // With a binormal drift the parallel velocity is usheath - wsheath, and
+          // the kinetic energy differs from the 1/2 m u^2 assumed in gamma_i
+          BoutReal q =
+              (gamma_i * tisheath + 0.5 * Mi * (SQ(usheath - wsheath) - SQ(usheath)))
+              * nisheath * usheath;
 
           if (no_flow) {
             usheath = 0.0;
@@ -646,8 +657,9 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
 
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath
-          // Note: The energy advected by the binormal drift is not yet subtracted
           q -= (2.5 * tisheath + 0.5 * Mi * SQ(visheath)) * nisheath * visheath;
+          // Energy carried through the target by the binormal drift
+          q -= binormalDriftEnergyFlux(tisheath, nisheath, visheath, Mi, wsheath);
 
           // Cross-sectional area in XZ plane and cell volume
           BoutReal da = (coord->J()[i] + coord->J()[ip])
@@ -666,8 +678,9 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
               nisheath * usheath * da / dv; // [m^-3s^-1] Diagnostics only
 
           // Total heat flux for diagnostic purposes
-          q = gamma_i * tisheath * nisheath * usheath; // [Wm^-2]
-          hflux_i[i] += q * da / dv;                   // [Wm^-3]
+          q = (gamma_i * tisheath + 0.5 * Mi * (SQ(visheath) - SQ(usheath))) * nisheath
+              * usheath;             // [Wm^-2]
+          hflux_i[i] += q * da / dv; // [Wm^-3]
           ion_sheath_power_ylow[i] +=
               heatflow; // [W] lower Y, so power placed in final domain cell
         }
@@ -708,7 +721,11 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
           // Positive -> into sheath. Allow supersonic flow.
           BoutReal usheath = std::max(Vi[i] + wsheath, sqrt(C_i_sq));
 
-          BoutReal q = gamma_i * tisheath * nisheath * usheath;
+          // With a binormal drift the parallel velocity is usheath - wsheath, and
+          // the kinetic energy differs from the 1/2 m u^2 assumed in gamma_i
+          BoutReal q =
+              (gamma_i * tisheath + 0.5 * Mi * (SQ(usheath - wsheath) - SQ(usheath)))
+              * nisheath * usheath;
 
           if (no_flow) {
             usheath = 0.0;
@@ -723,8 +740,9 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
 
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath
-          // Note: The energy advected by the binormal drift is not yet subtracted
           q -= (2.5 * tisheath + 0.5 * Mi * SQ(visheath)) * nisheath * visheath;
+          // Energy carried through the target by the binormal drift
+          q -= binormalDriftEnergyFlux(tisheath, nisheath, visheath, Mi, wsheath);
 
           // Cross-sectional area in XZ plane and cell volume
           BoutReal da = (coord->J()[i] + coord->J()[ip])
@@ -743,8 +761,9 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
               nisheath * usheath * da / dv; // [m^-3s^-1] Diagnostics only
 
           // Total heat flux for diagnostic purposes
-          q = gamma_i * tisheath * nisheath * usheath; // [Wm^-2]
-          hflux_i[i] -= q * da / dv;                   // [Wm^-3]
+          q = (gamma_i * tisheath + 0.5 * Mi * (SQ(visheath) - SQ(usheath))) * nisheath
+              * usheath;             // [Wm^-2]
+          hflux_i[i] -= q * da / dv; // [Wm^-3]
           ion_sheath_power_ylow[ip] +=
               heatflow; // [W]  Upper Y, so sheath boundary power on ylow side of inner guard cell
         }

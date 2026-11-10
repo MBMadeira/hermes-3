@@ -1,0 +1,142 @@
+# 1D island divertor SOL with a binormal (island-poloidal) ExB drift,
+# evolving ion and electron pressure
+#
+# Extends the isothermal benchmark in ../kriete-exb-drift
+# (Kriete et al., Nucl. Fusion 63 (2023) 026022) with
+#  - ion and electron pressure equations, including the ExB advection of
+#    internal energy, d(3/2 p)/dt = ... - Div_par(3/2 p v_E/Theta)
+#  - Braginskii parallel heat conduction, collisions, friction and
+#    ion-electron heat exchange
+#  - optionally, binormal anomalous transport (binormal_stpm), the effective
+#    parallel diffusion due to binormal D, chi and nu (Feng et al. PPCF 2011)
+#  - sheath heat transmission at both targets, with the Bohm condition and the
+#    sheath heat fluxes based on the total velocity v_par + v_E/Theta
+#
+# Uniform particle and power sources between the X-points. The grid is in
+# parallel length s (g_22 = 1); y = Theta * (s - length/2).
+#
+# Integrated test: see runtest. Same case as
+#   examples/stellarator-1D/kriete-exb-drift-pressure
+# Turn off the drift with binormal_exb_drift:vE=0, and switch on binormal
+# anomalous transport by adding binormal_stpm to hermes:components.
+
+nout = 30
+timestep = 1e6  # Time between outputs [1/Omega_ci]
+
+MXG = 0  # No guard cells in X
+
+[mesh]
+nx = 1
+ny = 100   # Resolution along the field line
+nz = 1
+J = 1
+
+Theta = 1e-3      # Field line pitch inside the island
+y_target = 0.5    # Island poloidal distance from mid-point to each target [m]
+y_xpoint = 0.5    # Island poloidal distance from mid-point to each X-point [m]
+                  # (X-points at the targets; see ../kriete-exb-drift/README.md)
+
+length = 2 * y_target / Theta   # Parallel length target-to-target [m]
+dy = length / ny
+
+ypos = y * length / (2*pi)          # Parallel position s [m]
+ypol = Theta * (ypos - length / 2)  # Island poloidal position y [m]
+
+# Source region (between the X-points)
+in_source = H(y_xpoint - abs(ypol))
+source_length = 2 * y_xpoint / Theta   # Parallel length of the source region [m]
+
+ixseps1 = -1   # Necessary to set boundary conditions in y
+ixseps2 = -1
+
+[hermes]
+components = (i, e, sheath_boundary_simple, binormal_exb_drift, sound_speed,
+              braginskii_collisions, braginskii_friction, braginskii_heat_exchange,
+              braginskii_conduction, electron_force_balance)
+
+normalise_metric = true
+
+Nnorm = 1e19   # [m^-3]
+Bnorm = 2.5    # [T]
+Tnorm = 100    # [eV]
+
+[solver]
+mxstep = 100000
+
+[drift]
+# Parameters of the drift (not a component)
+vE = 66     # Binormal ExB velocity [m/s]. Positive towards the upper target.
+            # With Theta = 1e-3 and Ti = Te = 90 eV this is gamma = vE/(2 c_s Theta) = 0.25
+
+[binormal_exb_drift]
+Theta = mesh:Theta
+vE = drift:vE
+diagnose = true
+
+[sheath_boundary_simple]
+# Apply the Bohm condition to v_par + v_E / Theta
+exb_drift = binormal_exb_drift
+diagnose = true
+
+# Binormal anomalous transport: add binormal_stpm to hermes:components and
+# uncomment this section
+#[binormal_stpm]
+#Theta = mesh:Theta
+#D = 1     # [m^2/s]
+#chi = 1   # [m^2/s]
+#nu = 1    # [m^2/s]
+
+[sound_speed]
+
+[electron_force_balance]
+
+[braginskii_collisions]
+
+[braginskii_friction]
+
+[braginskii_heat_exchange]
+
+[braginskii_conduction]
+
+####################################
+
+[i]  # Ions
+type = evolve_density, evolve_momentum, evolve_pressure
+
+charge = 1
+AA = 1.0
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+[Ni]
+function = 1
+
+flux = 1.31e24   # Particles per m^2 per second (both targets)
+source = flux / mesh:source_length * mesh:in_source   # [m^-3 s^-1]
+
+[Pi]
+function = 1
+
+powerflux = 6e7   # Ion power input [W/m^2] (both targets)
+source = (2/3) * powerflux / mesh:source_length * mesh:in_source   # [Pa/s]
+
+[NVi]
+function = 0
+
+####################################
+
+[e]  # Electrons
+type = quasineutral, evolve_pressure, zero_current
+
+charge = -1
+AA = 1/1836
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+[Pe]
+function = Pi:function
+
+powerflux = 6e7   # Electron power input [W/m^2] (both targets)
+source = (2/3) * powerflux / mesh:source_length * mesh:in_source   # [Pa/s]

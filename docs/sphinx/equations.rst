@@ -1373,17 +1373,27 @@ In a stellarator island divertor the field line pitch inside the island,
 the sound speed. With helical symmetry (:math:`\partial/\partial s_\zeta = 0`)
 a binormal flux :math:`F_\perp` contributes to the 1D divergence like a
 parallel flux :math:`F_\perp / \Theta`. This component adds the binormal
-:math:`\mathbf{E}\times\mathbf{B}` drift :math:`v_E` to the ion density and
-parallel momentum equations as an effective parallel advection velocity
-:math:`w = v_E / \Theta`, following the simple SOL drift model of
+:math:`\mathbf{E}\times\mathbf{B}` drift :math:`v_E` to the ion density, parallel
+momentum and (ion and electron) pressure equations as an effective parallel
+advection velocity :math:`w = v_E / \Theta`, following the simple SOL drift model of
 `D.M. Kriete et al., Nucl. Fusion 63 (2023) 026022 <https://doi.org/10.1088/1741-4326/acab75>`_:
 
 .. math::
 
    \begin{aligned}
    \frac{\partial n}{\partial t} =& \ldots - \nabla\cdot\left(\mathbf{b}\, n w\right) \\
-   \frac{\partial}{\partial t}\left(m n v_{||}\right) =& \ldots - \nabla\cdot\left(\mathbf{b}\, m n v_{||} w\right)
+   \frac{\partial}{\partial t}\left(m n v_{||}\right) =& \ldots - \nabla\cdot\left(\mathbf{b}\, m n v_{||} w\right) \\
+   \frac{\partial}{\partial t}\left(\frac{3}{2} p_s\right) =& \ldots - \nabla\cdot\left(\mathbf{b}\, \frac{5}{2} p_s w\right) + w\,\partial_{||} p_s
    \end{aligned}
+
+The drift is incompressible, so in the interior the energy terms equal
+:math:`-\nabla\cdot(\mathbf{b}\,\frac{3}{2} p_s w)`: the work term
+:math:`v_E\cdot\nabla p` cancels part of the enthalpy flux. They are written in
+the same form as the parallel advection in ``evolve_pressure``, so that the
+energy flux through a target is the enthalpy flux :math:`\frac{5}{2} p_s w`
+carried by the particles. The energy terms can be switched off with
+``energy_advection = false`` (and the momentum term with
+``momentum_advection = false``).
 
 The fluxes are upwinded (Lax flux with wave speed :math:`|w|` and the usual
 slope limiter). At sheath boundaries they use the boundary values set by the
@@ -1418,19 +1428,23 @@ poloidal length with :math:`g^{22} = \Theta^2`, where
 :math:`\Theta(s_\theta)`. The two give the same result for constant
 :math:`\Theta`.
 
-Only the ion density and momentum equations are modified; the advection of
-internal energy by the drift is not yet included, so the component should
-currently be used with isothermal species (for example the ``isothermal``
-component). The example ``examples/stellarator-1D/kriete-exb-drift``
+The example ``examples/stellarator-1D/kriete-exb-drift`` (isothermal)
 reproduces Kriete's analytic solution (target density asymmetry
 :math:`n_{upper}/n_{lower} = (1+\gamma)/(1-\gamma)`, stagnation point
 :math:`y_{stag}/y_X = 3\gamma - 4\gamma^3`, with
 :math:`\gamma = v_E / (2 c_s \Theta)`), and is tested in
-``tests/integrated/1D-binormal-exb-drift``.
+``tests/integrated/1D-binormal-exb-drift``. The example
+``examples/stellarator-1D/kriete-exb-drift-pressure`` evolves the ion and
+electron pressure with Braginskii conduction; its ``analyse.py`` checks the
+particle and energy balance. In the energy balance, the work term
+:math:`\int w\,\partial_{||}p\,dV = w\left(p_{upper} - p_{lower}\right)` is a source of
+internal energy, and the kinetic energy given to source particles (injected at
+rest) is a loss that Hermes-3 does not return to heat.
 
 With ``diagnose = true`` the effective velocity ``w_binormal_exb_drift``, the
-particle source ``S<species>_exb`` and the particle flow
-``F<species>_exb_ylow`` are saved.
+particle source ``S<species>_exb``, the particle flow ``F<species>_exb_ylow``,
+the energy source ``E<species>_exb`` and the enthalpy flow
+``EF<species>_exb_ylow`` are saved.
 
 .. doxygenstruct:: BinormalExBDrift
    :members:

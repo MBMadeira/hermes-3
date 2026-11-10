@@ -64,6 +64,25 @@ private:
   /// (normalised, field aligned). Zero if no drift is configured.
   bool use_exb_drift{false};
   Field3D exb_W;
+  /// Energy fluxes carried through the targets by the drift component, which
+  /// are subtracted from the sheath heat flux so that the total is gamma T n u
+  bool exb_energy_advection{false};   ///< Enthalpy 5/2 p w
+  bool exb_momentum_advection{false}; ///< Kinetic energy 1/2 m n v_par^2 w
+
+  /// Energy flux through a target carried by the binormal drift component:
+  /// enthalpy 5/2 n T w (if energy is advected) plus kinetic energy
+  /// 1/2 m n v_par^2 w (if momentum is advected). Zero without drift.
+  BoutReal binormalDriftEnergyFlux(BoutReal T, BoutReal n, BoutReal vpar, BoutReal mass,
+                                   BoutReal w) const {
+    BoutReal flux = 0.0;
+    if (exb_energy_advection) {
+      flux += 2.5 * T * n * w;
+    }
+    if (exb_momentum_advection) {
+      flux += 0.5 * mass * vpar * vpar * n * w;
+    }
+    return flux;
+  }
 
   BoutReal density_boundary_mode, pressure_boundary_mode,
       temperature_boundary_mode; ///< BC mode: 0=LimitFree, 1=ExponentialFree, 2=LinearFree
@@ -110,9 +129,14 @@ private:
   /// Chankin). The ion parallel velocity at the sheath entrance is then
   /// v_par = u - w with |u| >= c_s, so that the total particle flux through the
   /// target n (v_par + w) is the Bohm flux. The drift flux itself is carried by
-  /// the binormal_exb_drift component. The sheath potential and the electron
-  /// heat flux use the total (normal) flux n u; the electron parallel velocity at
-  /// the sheath is set to u - w so that J_par = 0.
+  /// the binormal_exb_drift component. The sheath potential and the heat fluxes
+  /// use the total (normal) flux n u. The total ion energy loss is
+  /// gamma_i T n u + 1/2 m (v_par^2 - u^2) n u: gamma_i assumes ions arrive with
+  /// kinetic energy 1/2 m u^2, whereas with the drift their parallel velocity is
+  /// v_par = u - w (identical without drift). The energy carried through the
+  /// target by the drift component (5/2 p w and 1/2 m n v_par^2 w) is subtracted
+  /// from the sheath sink. The electron parallel velocity at the sheath is set to
+  /// u - w so that J_par = 0.
   ///
   /// If the field phi is set, then this is used in the boundary condition.
   /// If not set, phi at the boundary is calculated and stored in the state.

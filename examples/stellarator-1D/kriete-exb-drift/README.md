@@ -5,6 +5,9 @@ Bohm condition in `sheath_boundary_simple` (option `exb_drift`), against the
 simple SOL drift model of D.M. Kriete et al., Nucl. Fusion 63 (2023) 026022,
 section 4.2.
 
+For the same case with evolving ion and electron pressure, see
+`../kriete-exb-drift-pressure`.
+
 The model is isothermal, with ion density and parallel momentum evolved, a
 constant field-line pitch Θ = 10⁻³, a constant binormal E×B velocity v_E, a
 uniform particle source and sheaths at both targets. The drift strength is

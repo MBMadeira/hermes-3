@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+
+# Binormal ExB drift in a 1D island divertor SOL with evolving ion and
+# electron pressure (binormal_exb_drift + sheath_boundary_simple exb_drift).
+#
+# Uniform particle and power sources, Braginskii conduction, sheaths at both
+# ends. Checks that, in steady state,
+#   - the total velocity v_par + v_E/Theta is sonic at both targets
+#     (generalised Bohm condition)
+#   - particles are conserved: total source = total target flux
+#   - energy is conserved: sheath losses + kinetic energy given to source
+#     particles (injected at rest) = power input + ExB work w (p_upper - p_lower)
+#   - the target density asymmetry agrees with Kriete et al., Nucl. Fusion 63
+#     (2023) 026022: n_upper / n_lower = (1 + gamma) / (1 - gamma), which holds
+#     here because conduction keeps the temperature nearly uniform
+#   - reversing the drift mirrors the solution (run on 2 processors)
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from boutdata.collect import collect
+from boututils.run_wrapper import launch_safe
+
+vE = 66.0  # [m/s]
+
+bohm_tolerance = 0.1
+particle_tolerance = 0.01
+energy_tolerance = 0.02
+asymmetry_rel_tolerance = 0.03
+steady_tolerance = 1e-2
+# The steady state has small time fluctuations (1e-5 to 1e-3 between outputs,
+# also without the drift), which limit how precisely two runs can agree
+symmetry_tolerance = 5e-3
+
+hermes_candidates = [Path("../../../hermes-3"), Path("../../../build/hermes-3")]
+hermes_exec = next((path for path in hermes_candidates if path.exists()), None)
+if hermes_exec is None:
+    raise FileNotFoundError("Could not find hermes-3 executable in repo root or build/")
+
+run_root = Path("runs")
+input_file = Path("data/BOUT.inp")
+
+
+def run_case(name, v, nproc):
+    """Run one case and return the final state in normalised units.
+
+    Normalisation: densities / Nnorm, velocities / Cs0, temperatures / Tnorm,
+    energy densities / (e Tnorm Nnorm). Since m_p Cs0^2 = e Tnorm, the kinetic
+    energy density of ions with AA = 1 is simply 1/2 N V^2.
+    """
+    case_dir = run_root / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    shutil.copy(input_file, case_dir / "BOUT.inp")
+
+    args = f"drift:vE={v}"
+    print(f"Running {name}: {args} on {nproc} processor(s)")
+    status, out = launch_safe(
+        f"{hermes_exec} -d {case_dir} {args}", nproc=nproc, pipe=True
+    )
+    (case_dir / "run.log").write_text(out)
+    if status != 0:
+        raise RuntimeError(f"Hermes run failed for {case_dir}")
+
+    def get(var):
+        return np.asarray(collect(var, path=str(case_dir), info=False)).squeeze()
+
+    d = {}
+    for key in ["Ni", "NVi", "Ti", "Te", "Ei_sheath", "Ee_sheath", "Si_sheath"]:
+        values = get(key)
+        d[key] = values[-1]
+        d[key + "_prev"] = values[-2]
+    for key in ["Pi_src", "Pe_src", "Si_src"]:
+        values = get(key)
+        d[key] = values[-1] if values.ndim > 1 else values  # May be time-dependent
+    for key in ["w_binormal_exb_drift", "dy", "g_22"]:
+        d[key] = get(key)
+    return d
+
+
+failures = []
+
+
+def check(name, value, ok):
+    print(f"    {name}: {value} -> {'Passed' if ok else 'Failed'}")
+    if not ok:
+        failures.append(name)
+
+
+d = run_case("vE_plus", vE, 1)
+N, Ti, Te = d["Ni"], d["Ti"], d["Te"]
+V = d["NVi"] / N  # AA = 1
+W = d["w_binormal_exb_drift"]
+cs = np.sqrt(Ti + Te)
+ds = d["dy"] * np.sqrt(d["g_22"])  # Normalised cell length (J = 1)
+
+change = np.max(np.abs(N - d["Ni_prev"]) / N)
+check("steady state", f"{change:.1e}", change < steady_tolerance)
+
+u_lower = (V[0] + W[0]) / cs[0]
+u_upper = (V[-1] + W[-1]) / cs[-1]
+check(
+    "Bohm condition on v_par + v_E/Theta",
+    f"lower {u_lower:.3f}, upper {u_upper:.3f}",
+    abs(u_lower + 1) < bohm_tolerance and abs(u_upper - 1) < bohm_tolerance,
+)
+
+# Particle balance per unit area: source integral vs flux through the targets
+# (sheath diagnostic, a sink in the cells next to the targets; its sign
+# convention differs between the two targets)
+particles_in = np.sum(d["Si_src"] * ds)
+particles_out = np.sum(np.abs(d["Si_sheath"]) * ds)
+particle_balance = particles_out / particles_in
+check(
+    "particle balance (out / in)",
+    f"{particle_balance:.4f}",
+    abs(particle_balance - 1) < particle_tolerance,
+)
+
+# Energy balance per unit area
+power_in = np.sum(1.5 * (d["Pi_src"] + d["Pe_src"]) * ds)
+sheath_out = -np.sum((d["Ei_sheath"] + d["Ee_sheath"]) * ds)
+dilution = np.sum(0.5 * V**2 * d["Si_src"] * ds)
+p_total = N * (Te + Ti)
+work_exb = np.mean(W) * (p_total[-1] - p_total[0])
+energy_balance = (sheath_out + dilution) / (power_in + work_exb)
+check(
+    "energy balance (sheath + dilution) / (input + ExB work)",
+    f"{energy_balance:.4f} (sheath / input {sheath_out / power_in:.4f}, "
+    f"ExB work {work_exb / power_in:+.3f}, dilution {dilution / power_in:.3f})",
+    abs(energy_balance - 1) < energy_tolerance,
+)
+
+mid = N.size // 2
+gamma = np.mean(W) / (2 * cs[mid])
+ratio = N[-1] / N[0]
+ratio_kriete = (1 + gamma) / (1 - gamma)
+check(
+    "target density ratio vs Kriete",
+    f"{ratio:.4f} (Kriete {ratio_kriete:.4f}, gamma {gamma:.3f})",
+    abs(ratio / ratio_kriete - 1) < asymmetry_rel_tolerance,
+)
+
+# Reversed drift on two processors: mirror image of the first run
+d_m = run_case("vE_minus_np2", -vE, 2)
+sym_err = np.max(np.abs(d_m["Ni"][::-1] - N)) / np.max(N)
+sym_err_T = np.max(np.abs(d_m["Te"][::-1] - Te)) / np.max(Te)
+check(
+    "mirror symmetry vE -> -vE (and np=2)",
+    f"density {sym_err:.2e}, Te {sym_err_T:.2e}",
+    sym_err < symmetry_tolerance and sym_err_T < symmetry_tolerance,
+)
+
+if failures:
+    print(f"\n => Failed: {', '.join(failures)}")
+    sys.exit(1)
+
+print("\n => All passed")
+sys.exit(0)
