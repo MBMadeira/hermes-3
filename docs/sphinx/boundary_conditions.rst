@@ -212,6 +212,18 @@ However, just disabling ``recycling`` would result in mach flows throughout the 
 neutral source. To avoid this, you can set ``no_flow = true`` under ``sheath_boundary_simple``. This will set the ion
 velocity to zero for the particle flux but will keep it at the :math:`v_i \geq c_{bohm}` condition for the heat flux.
 
+In 1D stellarator island divertor models with a binormal :math:`\mathbf{E}\times\mathbf{B}`
+drift (see `binormal_exb_drift`), set ``exb_drift`` to the name of the drift component. The Bohm
+condition is then imposed on the total velocity normal to the target,
+:math:`|v_{||} + v_E/\Theta| \geq c_s`, rather than on :math:`v_{||}` alone. The sheath potential
+and the heat fluxes use this total flux, and the parallel velocities of ions and electrons at the
+sheath entrance are set to :math:`v_{||} = u - v_E/\Theta` (so that :math:`J_{||} = 0`):
+
+.. code-block:: ini
+
+   [sheath_boundary_simple]
+   exb_drift = binormal_exb_drift
+
 By default, the Bohm condition is imposed on the target by the Lax flux. This allows the code to have a small amount
 of slack, resulting in a not-perfectly-exact setting but a smoother and more stable solution. For debugging, you can
 disable this behaviour and fix the Bohm condition explicitly. This can be done by setting ``fix_momentum_boundary_flux``

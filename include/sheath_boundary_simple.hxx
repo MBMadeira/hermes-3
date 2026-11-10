@@ -27,6 +27,9 @@ struct SheathBoundarySimple : public NamedComponent<SheathBoundarySimple> {
   ///   - secondary_electron_coef  Effective secondary electron emission coefficient
   ///   - sin_alpha                Sine of the angle between magnetic field line and wall surface (0 to 1)
   ///   - always_set_phi           Always set phi field? Default is to only modify if already set
+  ///   - exb_drift                Name of a binormal_exb_drift component section. If set,
+  ///                              the Bohm condition is imposed on the total effective
+  ///                              parallel velocity u = v_par + v_E/Theta (see below).
   SheathBoundarySimple(std::string name, Options& options, Solver*);
 
   void outputVars(Options& state) override;
@@ -56,6 +59,11 @@ private:
   Options diagnostics; // Options object to store diagnostic fields like a dict
 
   bool no_flow; ///< No flow speed, only remove energy
+
+  /// Binormal ExB drift: effective parallel velocity w = v_E / Theta
+  /// (normalised, field aligned). Zero if no drift is configured.
+  bool use_exb_drift{false};
+  Field3D exb_W;
 
   BoutReal density_boundary_mode, pressure_boundary_mode,
       temperature_boundary_mode; ///< BC mode: 0=LimitFree, 1=ExponentialFree, 2=LinearFree
@@ -95,6 +103,16 @@ private:
   ///     - energy_source
   /// - fields
   ///   - phi   Sets boundary
+  ///
+  /// With a binormal ExB drift (option exb_drift), the Bohm-Chodura condition
+  /// applies to the velocity normal to the target, which in the 1D island model
+  /// is u = v_par + w with w = v_E / Theta (Kriete et al. NF 2023, Stangeby &
+  /// Chankin). The ion parallel velocity at the sheath entrance is then
+  /// v_par = u - w with |u| >= c_s, so that the total particle flux through the
+  /// target n (v_par + w) is the Bohm flux. The drift flux itself is carried by
+  /// the binormal_exb_drift component. The sheath potential and the electron
+  /// heat flux use the total (normal) flux n u; the electron parallel velocity at
+  /// the sheath is set to u - w so that J_par = 0.
   ///
   /// If the field phi is set, then this is used in the boundary condition.
   /// If not set, phi at the boundary is calculated and stored in the state.

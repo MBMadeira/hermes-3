@@ -1,0 +1,121 @@
+# 1D island divertor SOL with a binormal (island-poloidal) ExB drift
+#
+# Benchmark against the simple SOL drift model of
+#   D.M. Kriete et al., Nucl. Fusion 63 (2023) 026022, section 4.2
+#
+#  - Isothermal ions and electrons, Ti = Te
+#  - Evolving ion density and parallel momentum
+#  - Sheath at both targets, with the Bohm condition applied to the
+#    total velocity normal to the target, v_par + v_E/Theta
+#  - Uniform particle source between the X-points, zero between the
+#    X-points and the targets
+#  - Constant binormal ExB velocity v_E and field line pitch Theta
+#
+# By default the X-points are placed at the targets (y_xpoint = y_target),
+# so the source extends over the whole domain. In Kriete's geometry
+# (y_xpoint < y_target) the flow in the source-free legs between X-points
+# and targets is exactly sonic. That state is neutrally stable: the steady
+# equations reduce to 0/0 there, so discretisation errors are not damped and
+# the solution keeps slowly drifting (it does so without the drift too).
+# The analytic solution between the X-points is the same in both cases.
+#
+# The grid is in parallel length s, from the lower target (s = 0) to the
+# upper target (s = length). The island poloidal coordinate is
+#     y = Theta * (s - length / 2)
+# The drift strength is gamma = v_E / (2 c_s Theta) (Kriete eq. 8).
+# Positive gamma means a drift towards the upper target.
+#
+# Analytic steady-state solution: see analytic.py in this directory.
+
+nout = 50
+timestep = 1e6  # Time between outputs [1/Omega_ci]
+
+MXG = 0  # No guard cells in X
+
+[mesh]
+nx = 1
+ny = 200   # Resolution along the field line
+nz = 1
+J = 1
+
+Theta = 1e-3      # Field line pitch inside the island
+y_target = 0.5    # Island poloidal distance from mid-point to each target [m]
+y_xpoint = 0.5    # Island poloidal distance from mid-point to each X-point [m]
+                  # Kriete's geometry with source-free legs: e.g. 0.4
+
+length = 2 * y_target / Theta   # Parallel length target-to-target [m]
+dy = length / ny
+
+ypos = y * length / (2*pi)          # Parallel position s [m]
+ypol = Theta * (ypos - length / 2)  # Island poloidal position y [m]
+
+ixseps1 = -1   # Necessary to set boundary conditions in y
+ixseps2 = -1
+
+[hermes]
+components = (i, e, sheath_boundary_simple, binormal_exb_drift, sound_speed,
+              electron_force_balance)
+
+normalise_metric = true
+
+Nnorm = 1e19   # [m^-3]
+Bnorm = 2.5    # [T]
+Tnorm = 100    # [eV]
+
+[solver]
+mxstep = 100000
+
+[kriete]
+# Parameters of the benchmark (not a component)
+gamma = 0.25     # Drift strength v_E / (2 c_s Theta)
+T = 90           # Ti = Te [eV]
+nmax = 1e19      # Peak density of the analytic solution [m^-3]
+
+# Sound speed sqrt((Ti + Te) / m_i) [m/s]
+cs = sqrt(2 * T * 1.602176634e-19 / 1.67262192595e-27)
+
+[binormal_exb_drift]
+Theta = mesh:Theta
+vE = 2 * kriete:gamma * kriete:cs * mesh:Theta   # Binormal ExB velocity [m/s]
+diagnose = true
+
+[sheath_boundary_simple]
+# Apply the Bohm condition to v_par + v_E / Theta
+exb_drift = binormal_exb_drift
+
+[sound_speed]
+
+[electron_force_balance]
+diagnose = true
+
+####################################
+
+[i]  # Ions
+type = evolve_density, evolve_momentum, isothermal
+
+charge = 1
+AA = 1.0
+temperature = kriete:T   # [eV]
+
+diagnose = true
+
+[Ni]
+function = 1
+
+# Uniform source between the X-points. The total source per unit area
+# 2 S s_x is chosen so that the analytic peak density is kriete:nmax:
+#    n_max = 2 S s_x / c_s,  s_x = y_xpoint / Theta
+source_density = kriete:nmax * kriete:cs * mesh:Theta / (2 * mesh:y_xpoint)
+source = source_density * H(mesh:y_xpoint - abs(mesh:ypol))   # [m^-3 s^-1]
+
+[NVi]
+function = 0
+
+####################################
+
+[e]  # Electrons
+type = quasineutral, isothermal, zero_current
+
+charge = -1
+AA = 1/1836
+temperature = kriete:T   # [eV]

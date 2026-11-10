@@ -1364,6 +1364,78 @@ The diffusion coefficients `D`, `\chi` and `\nu` and field line pitch `\Theta` a
    :members:
 
 
+Stellarator binormal E×B drift: binormal_exb_drift
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In a stellarator island divertor the field line pitch inside the island,
+:math:`\Theta = \sin\theta_i \sim 10^{-3}`, is so small that a binormal
+(island-poloidal) drift of order 100 m/s competes with parallel flows of order
+the sound speed. With helical symmetry (:math:`\partial/\partial s_\zeta = 0`)
+a binormal flux :math:`F_\perp` contributes to the 1D divergence like a
+parallel flux :math:`F_\perp / \Theta`. This component adds the binormal
+:math:`\mathbf{E}\times\mathbf{B}` drift :math:`v_E` to the ion density and
+parallel momentum equations as an effective parallel advection velocity
+:math:`w = v_E / \Theta`, following the simple SOL drift model of
+`D.M. Kriete et al., Nucl. Fusion 63 (2023) 026022 <https://doi.org/10.1088/1741-4326/acab75>`_:
+
+.. math::
+
+   \begin{aligned}
+   \frac{\partial n}{\partial t} =& \ldots - \nabla\cdot\left(\mathbf{b}\, n w\right) \\
+   \frac{\partial}{\partial t}\left(m n v_{||}\right) =& \ldots - \nabla\cdot\left(\mathbf{b}\, m n v_{||} w\right)
+   \end{aligned}
+
+The fluxes are upwinded (Lax flux with wave speed :math:`|w|` and the usual
+slope limiter). At sheath boundaries they use the boundary values set by the
+sheath component, so the total particle flux to a target is
+:math:`n\left(v_{||} + w\right)`.
+
+The drift changes the sheath boundary condition: the Bohm-Chodura condition
+applies to the velocity normal to the target, which in this geometry is
+:math:`u = v_{||} + v_E/\Theta`. This is implemented in
+:ref:`sec-sheath_boundary_simple` through the ``exb_drift`` option, which must
+name the drift component. Imposing :math:`v_{||} = \pm c_s` instead makes the
+problem ill-posed: one target becomes subsonic and the other supersonic.
+
+.. code-block:: ini
+
+   [hermes]
+   components = i, e, sheath_boundary_simple, binormal_exb_drift, ...
+
+   [binormal_exb_drift]
+   vE = 66       # [m/s] Binormal ExB velocity, positive towards increasing y
+   Theta = 1e-3  # Field line pitch inside the island
+   diagnose = true
+
+   [sheath_boundary_simple]
+   exb_drift = binormal_exb_drift   # Bohm condition on v_par + vE/Theta
+
+Both ``vE`` and ``Theta`` may be functions of position. The operators are
+written in terms of ``Div_par``, so the component works on a grid in parallel
+length (:math:`g_{22} = 1`, constant :math:`\Theta`) and on a grid in island
+poloidal length with :math:`g^{22} = \Theta^2`, where
+:math:`\nabla\cdot(\mathbf{b}\, n w) = \partial_{s_\theta}(n v_E)` for any
+:math:`\Theta(s_\theta)`. The two give the same result for constant
+:math:`\Theta`.
+
+Only the ion density and momentum equations are modified; the advection of
+internal energy by the drift is not yet included, so the component should
+currently be used with isothermal species (for example the ``isothermal``
+component). The example ``examples/stellarator-1D/kriete-exb-drift``
+reproduces Kriete's analytic solution (target density asymmetry
+:math:`n_{upper}/n_{lower} = (1+\gamma)/(1-\gamma)`, stagnation point
+:math:`y_{stag}/y_X = 3\gamma - 4\gamma^3`, with
+:math:`\gamma = v_E / (2 c_s \Theta)`), and is tested in
+``tests/integrated/1D-binormal-exb-drift``.
+
+With ``diagnose = true`` the effective velocity ``w_binormal_exb_drift``, the
+particle source ``S<species>_exb`` and the particle flow
+``F<species>_exb_ylow`` are saved.
+
+.. doxygenstruct:: BinormalExBDrift
+   :members:
+
+
 Tokamak cross-field transport: anomalous_diffusion
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

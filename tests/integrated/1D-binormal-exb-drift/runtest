@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+
+# Binormal ExB drift in a 1D island divertor SOL (binormal_exb_drift component
+# with the generalised Bohm condition in sheath_boundary_simple).
+#
+# Isothermal plasma, uniform particle source, sheaths at both ends. The steady
+# state is compared with the analytic solution of Kriete et al., Nucl. Fusion
+# 63 (2023) 026022, section 4.2:
+#   - target density ratio n_upper / n_lower = (1 + gamma) / (1 - gamma)
+#   - parallel flow stagnation point     y* = 3 gamma - 4 gamma^3
+#   - zero poloidal particle flux point  y* = -gamma
+#   - density and Mach number profiles
+# where gamma = v_E / (2 c_s Theta) and y* = y / y_xpoint.
+#
+# Also checks that
+#   - the total velocity v_par + v_E/Theta reaches the sound speed at both
+#     targets (generalised Bohm condition)
+#   - reversing the drift mirrors the solution (gamma -> -gamma, y -> -y)
+#   - results are the same on 1 and 2 processors
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from boutdata.collect import collect
+from boututils.run_wrapper import launch_safe
+
+gamma = 0.25
+ny = 100
+
+# Tolerances: the analytic solution has a square-root singularity at the
+# sonic points (the targets), which limits the accuracy at this resolution
+# (errors decrease with resolution; see the example in
+# examples/stellarator-1D/kriete-exb-drift).
+ratio_rel_tolerance = 0.05
+stagnation_tolerance = 0.04
+zero_flux_tolerance = 0.012
+profile_tolerance = 0.1
+bohm_min = 0.9
+symmetry_tolerance = 1e-3
+mpi_tolerance = 1e-3
+
+hermes_candidates = [Path("../../../hermes-3"), Path("../../../build/hermes-3")]
+hermes_exec = next((path for path in hermes_candidates if path.exists()), None)
+if hermes_exec is None:
+    raise FileNotFoundError("Could not find hermes-3 executable in repo root or build/")
+
+run_root = Path("runs")
+input_file = Path("data/BOUT.inp")
+
+
+def analytic(ystar, g):
+    """Kriete's analytic solution: returns (n / n_max, v_par / c_s)."""
+    F = 0.5 * (g + np.clip(ystar, -1.0, 1.0))
+    B = 2.0 * g * F + 1.0 - g**2
+    root = np.sqrt(np.maximum(B**2 - 4.0 * F**2, 0.0))
+    return 0.5 * (B + root), 2.0 * F / (B + root) - 2.0 * g
+
+
+def zero_crossing(x, f):
+    idx = np.where(np.sign(f[:-1]) != np.sign(f[1:]))[0]
+    if len(idx) == 0:
+        return np.nan
+    i = idx[0]
+    return x[i] - f[i] * (x[i + 1] - x[i]) / (f[i + 1] - f[i])
+
+
+def run_case(name, g, nproc):
+    case_dir = run_root / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    shutil.copy(input_file, case_dir / "BOUT.inp")
+
+    args = f"kriete:gamma={g} mesh:ny={ny}"
+    print(f"Running {name}: {args} on {nproc} processor(s)")
+    status, out = launch_safe(
+        f"{hermes_exec} -d {case_dir} {args}", nproc=nproc, pipe=True
+    )
+    (case_dir / "run.log").write_text(out)
+    if status != 0:
+        raise RuntimeError(f"Hermes run failed for {case_dir}")
+
+    def get(var):
+        return np.asarray(collect(var, path=str(case_dir), info=False)).squeeze()
+
+    N = get("Ni")[-1]  # Normalised to Nnorm = n_max
+    NV = get("NVi")[-1]
+    W = get("w_binormal_exb_drift")  # v_E / Theta, normalised to Cs0
+    Ti = float(get("Ti"))
+    Te = float(get("Te"))
+    return N, NV / N, W, np.sqrt(Ti + Te)  # AA = 1
+
+
+failures = []
+
+
+def check(name, value, ok):
+    print(f"    {name}: {value} -> {'Passed' if ok else 'Failed'}")
+    if not ok:
+        failures.append(name)
+
+
+N, V, W, cs = run_case("gamma_plus", gamma, 1)
+
+# Grid: X-points at the targets, so y* runs from -1 to 1 across the domain
+ystar = (2 * np.arange(ny) + 1) / ny - 1
+g = float(np.mean(W)) / (2 * cs)
+check("drift strength gamma", g, abs(g - gamma) < 1e-6)
+
+n_an, M_an = analytic(ystar, gamma)
+M = V / cs
+
+ratio = N[-1] / N[0]
+ratio_an = (1 + gamma) / (1 - gamma)
+check(
+    "target density ratio",
+    f"{ratio:.4f} (analytic {ratio_an:.4f})",
+    abs(ratio / ratio_an - 1) < ratio_rel_tolerance,
+)
+
+y_stag = zero_crossing(ystar, M)
+y_stag_an = 3 * gamma - 4 * gamma**3
+check(
+    "stagnation point",
+    f"{y_stag:.4f} (analytic {y_stag_an:.4f})",
+    abs(y_stag - y_stag_an) < stagnation_tolerance,
+)
+
+y_vy0 = zero_crossing(ystar, M + 2 * gamma)
+check(
+    "zero poloidal flux point",
+    f"{y_vy0:.4f} (analytic {-gamma:.4f})",
+    abs(y_vy0 + gamma) < zero_flux_tolerance,
+)
+
+err_n = np.max(np.abs(N - n_an))
+err_M = np.max(np.abs(M - M_an))
+check("max density error", f"{err_n:.4f}", err_n < profile_tolerance)
+check("max Mach number error", f"{err_M:.4f}", err_M < 2 * profile_tolerance)
+
+u_lower = (V[0] + W[0]) / cs
+u_upper = (V[-1] + W[-1]) / cs
+check(
+    "Bohm condition on v_par + v_E/Theta",
+    f"lower {u_lower:.3f}, upper {u_upper:.3f}",
+    (u_lower < -bohm_min) and (u_upper > bohm_min),
+)
+
+# Reversed drift on two processors: mirror image of the first run
+N_m, V_m, W_m, _ = run_case("gamma_minus_np2", -gamma, 2)
+sym_err = np.max(np.abs(N_m[::-1] - N)) / np.max(N)
+check(
+    "mirror symmetry gamma -> -gamma (and np=2)",
+    f"{sym_err:.2e}",
+    sym_err < symmetry_tolerance,
+)
+
+N_2, _, _, _ = run_case("gamma_plus_np2", gamma, 2)
+mpi_err = np.max(np.abs(N_2 - N)) / np.max(N)
+check("1 vs 2 processors", f"{mpi_err:.2e}", mpi_err < mpi_tolerance)
+
+if failures:
+    print(f"\n => Failed: {', '.join(failures)}")
+    sys.exit(1)
+
+print("\n => All passed")
+sys.exit(0)

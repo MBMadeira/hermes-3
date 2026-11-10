@@ -104,6 +104,7 @@ set(HERMES_SOURCES
     src/zero_current.cxx
     src/anomalous_diffusion.cxx
     src/binormal_stpm.cxx
+    src/binormal_exb_drift.cxx
     src/recycling.cxx
     src/adas_reaction.cxx
     src/noflow_boundary.cxx
@@ -131,6 +132,7 @@ set(HERMES_SOURCES
     include/classical_diffusion.hxx
     include/cx_reaction.hxx
     include/binormal_stpm.hxx
+    include/binormal_exb_drift.hxx
     include/braginskii_collisions.hxx
     include/braginskii_conduction.hxx
     include/braginskii_electron_viscosity.hxx
@@ -378,6 +380,7 @@ if(HERMES_TESTS)
   endfunction()
 
   hermes_add_integrated_test(1D-density CONFLICTS BOUT_USE_METRIC_3D)
+  hermes_add_integrated_test(1D-binormal-exb-drift CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-fluid CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling-dthe CONFLICTS BOUT_USE_METRIC_3D)
