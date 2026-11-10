@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 # Binormal ExB drift in a 1D island divertor SOL with evolving ion and
-# electron pressure (binormal_exb_drift + sheath_boundary_simple exb_drift).
+# electron pressure (binormal_exb_drift + exb_drift option of the sheath
+# components). Runs with sheath_boundary_simple and with sheath_boundary.
 #
 # Uniform particle and power sources, Braginskii conduction, sheaths at both
 # ends. Checks that, in steady state,
@@ -28,6 +29,10 @@ vE = 66.0  # [m/s]
 bohm_tolerance = 0.1
 particle_tolerance = 0.01
 energy_tolerance = 0.02
+# The total sheath losses diagnosed by sheath_boundary approximate the
+# advected part with sheath-entrance values; at this resolution the energy
+# balance is off by ~2% already without the drift
+energy_tolerance_full_sheath = 0.03
 asymmetry_rel_tolerance = 0.03
 steady_tolerance = 1e-2
 # The steady state has small time fluctuations (1e-5 to 1e-3 between outputs,
@@ -43,7 +48,7 @@ run_root = Path("runs")
 input_file = Path("data/BOUT.inp")
 
 
-def run_case(name, v, nproc):
+def run_case(name, v, nproc, full_sheath=False):
     """Run one case and return the final state in normalised units.
 
     Normalisation: densities / Nnorm, velocities / Cs0, temperatures / Tnorm,
@@ -54,7 +59,12 @@ def run_case(name, v, nproc):
     if case_dir.exists():
         shutil.rmtree(case_dir)
     case_dir.mkdir(parents=True)
-    shutil.copy(input_file, case_dir / "BOUT.inp")
+    text = input_file.read_text()
+    if full_sheath:
+        # Use the Tskhakaya sheath component instead of the simple one
+        text = text.replace("sheath_boundary_simple,", "sheath_boundary,")
+        text = text.replace("[sheath_boundary_simple]", "[sheath_boundary]")
+    (case_dir / "BOUT.inp").write_text(text)
 
     args = f"drift:vE={v}"
     print(f"Running {name}: {args} on {nproc} processor(s)")
@@ -90,59 +100,71 @@ def check(name, value, ok):
         failures.append(name)
 
 
+def check_steady_state(d, label, bohm_adiabatic, energy_tol):
+    """Checks on a single run. bohm_adiabatic is the ion adiabatic index in the
+    sheath Bohm speed: 1 for sheath_boundary_simple, 5/3 for sheath_boundary."""
+    print(f"  {label}")
+    N, Ti, Te = d["Ni"], d["Ti"], d["Te"]
+    V = d["NVi"] / N  # AA = 1
+    W = d["w_binormal_exb_drift"]
+    cs = np.sqrt(Ti + Te)
+    c_bohm = np.sqrt(bohm_adiabatic * Ti + Te)
+    ds = d["dy"] * np.sqrt(d["g_22"])  # Normalised cell length (J = 1)
+
+    change = np.max(np.abs(N - d["Ni_prev"]) / N)
+    check("steady state", f"{change:.1e}", change < steady_tolerance)
+
+    u_lower = (V[0] + W[0]) / c_bohm[0]
+    u_upper = (V[-1] + W[-1]) / c_bohm[-1]
+    check(
+        "Bohm condition on v_par + v_E/Theta",
+        f"lower {u_lower:.3f}, upper {u_upper:.3f}",
+        abs(u_lower + 1) < bohm_tolerance and abs(u_upper - 1) < bohm_tolerance,
+    )
+
+    # Particle balance per unit area: source integral vs flux through the
+    # targets (sheath diagnostic, a sink in the cells next to the targets;
+    # its sign convention differs between the two targets)
+    particles_in = np.sum(d["Si_src"] * ds)
+    particles_out = np.sum(np.abs(d["Si_sheath"]) * ds)
+    particle_balance = particles_out / particles_in
+    check(
+        "particle balance (out / in)",
+        f"{particle_balance:.4f}",
+        abs(particle_balance - 1) < particle_tolerance,
+    )
+
+    # Energy balance per unit area
+    power_in = np.sum(1.5 * (d["Pi_src"] + d["Pe_src"]) * ds)
+    sheath_out = -np.sum((d["Ei_sheath"] + d["Ee_sheath"]) * ds)
+    dilution = np.sum(0.5 * V**2 * d["Si_src"] * ds)
+    p_total = N * (Te + Ti)
+    work_exb = np.mean(W) * (p_total[-1] - p_total[0])
+    energy_balance = (sheath_out + dilution) / (power_in + work_exb)
+    check(
+        "energy balance (sheath + dilution) / (input + ExB work)",
+        f"{energy_balance:.4f} (sheath / input {sheath_out / power_in:.4f}, "
+        f"ExB work {work_exb / power_in:+.3f}, dilution {dilution / power_in:.3f})",
+        abs(energy_balance - 1) < energy_tol,
+    )
+
+    mid = N.size // 2
+    gamma = np.mean(W) / (2 * cs[mid])
+    ratio = N[-1] / N[0]
+    ratio_kriete = (1 + gamma) / (1 - gamma)
+    check(
+        "target density ratio vs Kriete",
+        f"{ratio:.4f} (Kriete {ratio_kriete:.4f}, gamma {gamma:.3f})",
+        abs(ratio / ratio_kriete - 1) < asymmetry_rel_tolerance,
+    )
+
+
 d = run_case("vE_plus", vE, 1)
-N, Ti, Te = d["Ni"], d["Ti"], d["Te"]
-V = d["NVi"] / N  # AA = 1
-W = d["w_binormal_exb_drift"]
-cs = np.sqrt(Ti + Te)
-ds = d["dy"] * np.sqrt(d["g_22"])  # Normalised cell length (J = 1)
+check_steady_state(d, "sheath_boundary_simple", 1.0, energy_tolerance)
+N, Te = d["Ni"], d["Te"]
 
-change = np.max(np.abs(N - d["Ni_prev"]) / N)
-check("steady state", f"{change:.1e}", change < steady_tolerance)
-
-u_lower = (V[0] + W[0]) / cs[0]
-u_upper = (V[-1] + W[-1]) / cs[-1]
-check(
-    "Bohm condition on v_par + v_E/Theta",
-    f"lower {u_lower:.3f}, upper {u_upper:.3f}",
-    abs(u_lower + 1) < bohm_tolerance and abs(u_upper - 1) < bohm_tolerance,
-)
-
-# Particle balance per unit area: source integral vs flux through the targets
-# (sheath diagnostic, a sink in the cells next to the targets; its sign
-# convention differs between the two targets)
-particles_in = np.sum(d["Si_src"] * ds)
-particles_out = np.sum(np.abs(d["Si_sheath"]) * ds)
-particle_balance = particles_out / particles_in
-check(
-    "particle balance (out / in)",
-    f"{particle_balance:.4f}",
-    abs(particle_balance - 1) < particle_tolerance,
-)
-
-# Energy balance per unit area
-power_in = np.sum(1.5 * (d["Pi_src"] + d["Pe_src"]) * ds)
-sheath_out = -np.sum((d["Ei_sheath"] + d["Ee_sheath"]) * ds)
-dilution = np.sum(0.5 * V**2 * d["Si_src"] * ds)
-p_total = N * (Te + Ti)
-work_exb = np.mean(W) * (p_total[-1] - p_total[0])
-energy_balance = (sheath_out + dilution) / (power_in + work_exb)
-check(
-    "energy balance (sheath + dilution) / (input + ExB work)",
-    f"{energy_balance:.4f} (sheath / input {sheath_out / power_in:.4f}, "
-    f"ExB work {work_exb / power_in:+.3f}, dilution {dilution / power_in:.3f})",
-    abs(energy_balance - 1) < energy_tolerance,
-)
-
-mid = N.size // 2
-gamma = np.mean(W) / (2 * cs[mid])
-ratio = N[-1] / N[0]
-ratio_kriete = (1 + gamma) / (1 - gamma)
-check(
-    "target density ratio vs Kriete",
-    f"{ratio:.4f} (Kriete {ratio_kriete:.4f}, gamma {gamma:.3f})",
-    abs(ratio / ratio_kriete - 1) < asymmetry_rel_tolerance,
-)
+d_full = run_case("vE_plus_full_sheath", vE, 1, full_sheath=True)
+check_steady_state(d_full, "sheath_boundary", 5.0 / 3, energy_tolerance_full_sheath)
 
 # Reversed drift on two processors: mirror image of the first run
 d_m = run_case("vE_minus_np2", -vE, 2)

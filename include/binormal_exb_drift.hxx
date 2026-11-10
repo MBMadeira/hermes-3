@@ -22,9 +22,29 @@
 ///
 /// See Kriete et al., Nucl. Fusion 63 (2023) 026022, eqs (5) and (7).
 struct BinormalExBSettings {
-  Field3D W;               ///< w = v_E / Theta, normalised to Cs0
-  bool momentum_advection; ///< Advect parallel momentum with the drift?
-  bool energy_advection;   ///< Advect internal energy with the drift?
+  Field3D W;                      ///< w = v_E / Theta, normalised to Cs0
+  bool momentum_advection{false}; ///< Advect parallel momentum with the drift?
+  bool energy_advection{false};   ///< Advect internal energy with the drift?
+
+  /// Energy flux through a target carried by the binormal_exb_drift component,
+  /// for a species with temperature T, density n, parallel velocity vpar and
+  /// mass `mass` at the sheath entrance, where the drift velocity is w:
+  /// enthalpy 5/2 n T w (if energy is advected) plus kinetic energy
+  /// 1/2 m n v_par^2 w (if momentum is advected).
+  ///
+  /// Sheath components subtract this from their heat flux, so that the total
+  /// energy leaving through the target is the sheath heat flux.
+  BoutReal targetEnergyFlux(BoutReal T, BoutReal n, BoutReal vpar, BoutReal mass,
+                            BoutReal w) const {
+    BoutReal flux = 0.0;
+    if (energy_advection) {
+      flux += 2.5 * T * n * w;
+    }
+    if (momentum_advection) {
+      flux += 0.5 * mass * vpar * vpar * n * w;
+    }
+    return flux;
+  }
 };
 
 /// Read the binormal ExB drift settings from an options section

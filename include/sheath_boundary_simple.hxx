@@ -2,6 +2,7 @@
 #ifndef SHEATH_BOUNDARY_SIMPLE_H
 #define SHEATH_BOUNDARY_SIMPLE_H
 
+#include "binormal_exb_drift.hxx"
 #include "component.hxx"
 
 /// Boundary condition at the wall in Y
@@ -60,29 +61,11 @@ private:
 
   bool no_flow; ///< No flow speed, only remove energy
 
-  /// Binormal ExB drift: effective parallel velocity w = v_E / Theta
-  /// (normalised, field aligned). Zero if no drift is configured.
+  /// Binormal ExB drift settings (see binormal_exb_drift.hxx). The effective
+  /// parallel velocity w = v_E / Theta is stored field aligned, and is zero if
+  /// no drift is configured.
   bool use_exb_drift{false};
-  Field3D exb_W;
-  /// Energy fluxes carried through the targets by the drift component, which
-  /// are subtracted from the sheath heat flux so that the total is gamma T n u
-  bool exb_energy_advection{false};   ///< Enthalpy 5/2 p w
-  bool exb_momentum_advection{false}; ///< Kinetic energy 1/2 m n v_par^2 w
-
-  /// Energy flux through a target carried by the binormal drift component:
-  /// enthalpy 5/2 n T w (if energy is advected) plus kinetic energy
-  /// 1/2 m n v_par^2 w (if momentum is advected). Zero without drift.
-  BoutReal binormalDriftEnergyFlux(BoutReal T, BoutReal n, BoutReal vpar, BoutReal mass,
-                                   BoutReal w) const {
-    BoutReal flux = 0.0;
-    if (exb_energy_advection) {
-      flux += 2.5 * T * n * w;
-    }
-    if (exb_momentum_advection) {
-      flux += 0.5 * mass * vpar * vpar * n * w;
-    }
-    return flux;
-  }
+  BinormalExBSettings exb;
 
   BoutReal density_boundary_mode, pressure_boundary_mode,
       temperature_boundary_mode; ///< BC mode: 0=LimitFree, 1=ExponentialFree, 2=LinearFree

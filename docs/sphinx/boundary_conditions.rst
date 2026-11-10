@@ -298,6 +298,30 @@ The yield as a function of the ion impact energy :math:`E_i` is
 where :math:`\gamma_{max}` is set by ``ion_ee_gamma_max``, :math:`E_{th}` by ``ion_ee_E_th``,
 :math:`E_{max}` by ``ion_ee_E_max``, and :math:`p` by ``ion_ee_p``.
 
+Binormal E×B drift
+""""""""""""""""""
+
+As in `sheath_boundary_simple`, setting ``exb_drift`` to the name of a `binormal_exb_drift`
+component applies the Bohm condition to the total velocity normal to the target,
+:math:`|v_{||} + v_E/\Theta| \geq C_i` with :math:`C_i` the (Tskhakaya) ion speed, and sets the ion
+and electron parallel velocities at the sheath entrance to :math:`v_{||} = u - v_E/\Theta`. The
+sheath potential and the ion-induced secondary emission use the total ion flux :math:`n_i u` and
+the actual ion kinetic energy :math:`\frac{1}{2}m_i v_{||}^2`. The energy carried through the target
+by the drift component is subtracted from the sheath heat fluxes, and the ion kinetic energy assumed in
+:math:`\gamma_i` is corrected for the parallel velocity, so that the total energy loss of each species is
+unchanged by the way it is split between advection and the sheath sink. Without the drift the boundary
+conditions are unchanged.
+
+.. code-block:: ini
+
+   [sheath_boundary]
+   exb_drift = binormal_exb_drift
+   diagnose = true   # Save total sheath energy and particle losses
+
+With ``diagnose = true`` the total energy loss of each species through the sheaths
+(``E<species>_sheath``, advected plus sheath sink, in the cells next to the targets) and the ion
+particle loss (``S<species>_sheath``) are saved, with the same names as in `sheath_boundary_simple`.
+
 .. _sec-sheath_boundary_insulating:
 
 sheath_boundary_insulating

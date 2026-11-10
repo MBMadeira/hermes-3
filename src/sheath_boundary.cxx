@@ -1,4 +1,5 @@
 #include "../include/sheath_boundary.hxx"
+#include "../include/binormal_exb_drift.hxx"
 #include "../include/component.hxx"
 #include "../include/guarded_options.hxx"
 #include "../include/permissions.hxx"
@@ -153,6 +154,23 @@ SheathBoundary::SheathBoundary(std::string name, Options& alloptions, Solver*)
                         .doc("Apply a floor to wall potential when calculating Ve?")
                         .withDefault<bool>(true);
 
+  const std::string exb_drift_name =
+      options["exb_drift"]
+          .doc("Name of a binormal_exb_drift component. If set, the Bohm condition "
+               "is applied to v_par + v_E/Theta")
+          .withDefault<std::string>("");
+  use_exb_drift = !exb_drift_name.empty();
+  if (use_exb_drift) {
+    exb = readBinormalExBSettings(alloptions[exb_drift_name], alloptions["units"]);
+  } else {
+    exb.W = Field3D(0.0);
+  }
+  exb.W = toFieldAligned(exb.W);
+
+  diagnose = options["diagnose"]
+                 .doc("Save sheath particle and energy losses")
+                 .withDefault<bool>(false);
+
   substitutePermissions("e_whole_domain", {"AA", "adiabatic"});
   substitutePermissions("e_boundary", {"density", "temperature"});
   substitutePermissions("e_optional", {"velocity", "momentum"});
@@ -194,6 +212,17 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
                     : zeroFrom(Ne);
 
   Coordinates* coord = mesh->getCoordinates();
+
+  // Cross-section area of the boundary face between cell i and guard cell g,
+  // divided by the volume of cell i. Converts a flux into a source in cell i.
+  const auto areaOverVolume = [&](const Ind3D& i, const Ind3D& g) {
+    return (coord->J()[i] + coord->J()[g])
+           / (sqrt(coord->g_22()[i]) + sqrt(coord->g_22()[g]))
+           / (coord->dy()[i] * coord->J()[i]);
+  };
+
+  // Diagnostics: total energy loss of the electrons through the sheaths
+  Field3D electron_sheath_energy = zeroFrom(Ne);
 
   //////////////////////////////////////////////////////////////////
   // Electrostatic potential
@@ -286,12 +315,13 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
             const BoutReal C_i_sq = std::clamp(
                 (adiabatic * ti + Zi * s_i * te * grad_ne / grad_ni) / Mi, 0., 100.);
 
-            // Enable supersonic flow
-            const BoutReal visheath =
-                std::min(-sqrt(C_i_sq), Vi[i]); // Negative into lower sheath
+            // Total velocity normal to the target, v_par + w
+            // (w = 0 without binormal drift). Enable supersonic flow.
+            const BoutReal usheath =
+                std::min(-sqrt(C_i_sq), Vi[i] + exb.W[i]); // Negative into lower sheath
 
-            // Note: Vzi = |visheath| * sin(α)
-            ion_sum[i] += s_i * Zi * sin_alpha[ip] * (-visheath);
+            // Note: Vzi = |usheath| * sin(α)
+            ion_sum[i] += s_i * Zi * sin_alpha[ip] * (-usheath);
           }
         }
       }
@@ -327,11 +357,12 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
             const BoutReal C_i_sq = std::clamp(
                 (adiabatic * ti + Zi * s_i * te * grad_ne / grad_ni) / Mi, 0., 100.);
 
-            // Enable supersonic flow
-            const BoutReal visheath =
-                std::max(sqrt(C_i_sq), Vi[i]); // Positive into upper sheath
+            // Total velocity normal to the target, v_par + w
+            // (w = 0 without binormal drift). Enable supersonic flow.
+            const BoutReal usheath =
+                std::max(sqrt(C_i_sq), Vi[i] + exb.W[i]); // Positive into upper sheath
 
-            ion_sum[i] += s_i * Zi * sin_alpha[im] * visheath;
+            ion_sum[i] += s_i * Zi * sin_alpha[im] * usheath;
           }
         }
       }
@@ -390,11 +421,14 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
                   const BoutReal C_i_sq = std::clamp(
                       (ad * ti + zi * s_i * te * grad_ne / grad_ni) / mi, 0., 100.);
 
-                  // Negative velocity is outward through the lower-Y sheath
-                  const BoutReal visheath = std::min(-sqrt(C_i_sq), ion.velocity[i]);
+                  // Negative velocity is outward through the lower-Y sheath.
+                  // Total normal velocity u = v_par + w, parallel v_par = u - w
+                  const BoutReal usheath =
+                      std::min(-sqrt(C_i_sq), ion.velocity[i] + exb.W[i]);
+                  const BoutReal visheath = usheath - exb.W[i];
 
                   // Positive magnitude of the outgoing ion particle flux divided by ne
-                  const BoutReal ion_flux_over_ne = -s_i * sin_alpha[ip] * visheath;
+                  const BoutReal ion_flux_over_ne = -s_i * sin_alpha[ip] * usheath;
 
                   const BoutReal ion_energy =
                       0.5 * (ti + mi * SQ(visheath)) + zi * delta_phi_guess;
@@ -482,11 +516,14 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
                   const BoutReal C_i_sq = std::clamp(
                       (ad * ti + zi * s_i * te * grad_ne / grad_ni) / mi, 0., 100.);
 
-                  // Positive velocity is outward through the upper-Y sheath
-                  const BoutReal visheath = std::max(sqrt(C_i_sq), ion.velocity[i]);
+                  // Positive velocity is outward through the upper-Y sheath.
+                  // Total normal velocity u = v_par + w, parallel v_par = u - w
+                  const BoutReal usheath =
+                      std::max(sqrt(C_i_sq), ion.velocity[i] + exb.W[i]);
+                  const BoutReal visheath = usheath - exb.W[i];
 
                   // Positive magnitude of the outgoing ion particle flux divided by ne
-                  const BoutReal ion_flux_over_ne = s_i * sin_alpha[im] * visheath;
+                  const BoutReal ion_flux_over_ne = s_i * sin_alpha[im] * usheath;
 
                   const BoutReal ion_energy =
                       0.5 * (ti + mi * SQ(visheath)) + zi * delta_phi_guess;
@@ -570,20 +607,30 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
             (2 / (1. - Ge)) + ((phisheath - phi_wall) / floor(tesheath, 1e-5)), 0.0);
 
         // Electron velocity into sheath (< 0)
+        // With a binormal drift this is the total velocity normal to the
+        // target, v_par + w
         const BoutReal vesheath = (tesheath < 1e-10)
                                       ? 0.0
                                       : -sqrt(tesheath / (TWOPI * Me)) * (1. - Ge)
                                             * exp(-(phisheath - phi_wall) / tesheath);
 
-        Ve[im] = 2 * vesheath - Ve[i];
-        NVe[im] = 2. * Me * nesheath * vesheath - NVe[i];
+        // Parallel velocity at the sheath entrance (= vesheath without drift)
+        const BoutReal wesheath = 0.5 * (exb.W[i] + exb.W[im]);
+        const BoutReal vepar = vesheath - wesheath;
+
+        Ve[im] = 2 * vepar - Ve[i];
+        NVe[im] = 2. * Me * nesheath * vepar - NVe[i];
 
         // Take into account the flow of energy due to fluid flow
         // This is additional energy flux through the sheath
         // Note: Here this is negative because vesheath < 0
-        BoutReal q = ((gamma_e - 1 - 1 / (electron_adiabatic - 1)) * tesheath
-                      - 0.5 * Me * SQ(vesheath))
-                     * nesheath * vesheath;
+        // Total gamma_e T n u, minus the energy advected through the boundary
+        // in the parallel direction and by the binormal drift
+        const BoutReal q_advected =
+            (((1 + 1 / (electron_adiabatic - 1)) * tesheath + 0.5 * Me * SQ(vepar))
+             * nesheath * vepar)
+            + exb.targetEnergyFlux(tesheath, nesheath, vepar, Me, wesheath);
+        BoutReal q = (gamma_e * tesheath * nesheath * vesheath) - q_advected;
         q = std::min(q, 0.0);
 
         // Multiply by cell area to get power
@@ -601,6 +648,11 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 #endif
 
         electron_energy_source[i] += power;
+
+        if (diagnose) {
+          // Total energy loss: sheath sink plus energy advected through the face
+          electron_sheath_energy[i] += (q + q_advected) * areaOverVolume(i, im);
+        }
       }
     }
   }
@@ -638,20 +690,30 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
             (2 / (1. - Ge)) + ((phisheath - phi_wall) / floor(tesheath, 1e-5)), 0.0);
 
         // Electron velocity into sheath (> 0)
+        // With a binormal drift this is the total velocity normal to the
+        // target, v_par + w
         const BoutReal vesheath = (tesheath < 1e-10)
                                       ? 0.0
                                       : sqrt(tesheath / (TWOPI * Me)) * (1. - Ge)
                                             * exp(-(phisheath - phi_wall) / tesheath);
 
-        Ve[ip] = 2 * vesheath - Ve[i];
-        NVe[ip] = 2. * Me * nesheath * vesheath - NVe[i];
+        // Parallel velocity at the sheath entrance (= vesheath without drift)
+        const BoutReal wesheath = 0.5 * (exb.W[i] + exb.W[ip]);
+        const BoutReal vepar = vesheath - wesheath;
+
+        Ve[ip] = 2 * vepar - Ve[i];
+        NVe[ip] = 2. * Me * nesheath * vepar - NVe[i];
 
         // Take into account the flow of energy due to fluid flow
         // This is additional energy flux through the sheath
         // Note: Here this is positive because vesheath > 0
-        BoutReal q = ((gamma_e - 1 - 1 / (electron_adiabatic - 1)) * tesheath
-                      - 0.5 * Me * SQ(vesheath))
-                     * nesheath * vesheath;
+        // Total gamma_e T n u, minus the energy advected through the boundary
+        // in the parallel direction and by the binormal drift
+        const BoutReal q_advected =
+            (((1 + 1 / (electron_adiabatic - 1)) * tesheath + 0.5 * Me * SQ(vepar))
+             * nesheath * vepar)
+            + exb.targetEnergyFlux(tesheath, nesheath, vepar, Me, wesheath);
+        BoutReal q = (gamma_e * tesheath * nesheath * vesheath) - q_advected;
         q = std::max(q, 0.0);
         // Multiply by cell area to get power
         BoutReal flux = q * (coord->J()[i] + coord->J()[ip])
@@ -667,6 +729,11 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
         }
 #endif
         electron_energy_source[i] -= power;
+
+        if (diagnose) {
+          // Total energy loss: sheath sink plus energy advected through the face
+          electron_sheath_energy[i] -= (q + q_advected) * areaOverVolume(i, ip);
+        }
       }
     }
   }
@@ -728,6 +795,10 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
             ? toFieldAligned(getNonFinal<Field3D>(species["energy_source"]))
             : zeroFrom(Ni);
 
+    // Diagnostics: total energy and particle losses through the sheaths
+    Field3D ion_sheath_energy = zeroFrom(Ni);
+    Field3D ion_sheath_particles = zeroFrom(Ni);
+
     if (lower_y) {
       for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
         for (int jz = 0; jz < mesh->LocalNz; jz++) {
@@ -778,19 +849,36 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
           // Ion sheath heat transmission coefficient
           const BoutReal gamma_i = 2.5 + (0.5 * Mi * C_i_sq / tisheath);
 
-          const BoutReal visheath = std::min(-sqrt(C_i_sq), // Negative -> into sheath
-                                             Vi[i]);        // Allow supersonic flow
+          // Effective binormal drift velocity at the sheath (zero without drift)
+          const BoutReal wsheath = 0.5 * (exb.W[i] + exb.W[im]);
+
+          // Total velocity normal to the target, v_par + w
+          const BoutReal usheath = std::min(-sqrt(C_i_sq),    // Negative -> into sheath
+                                            Vi[i] + wsheath); // Allow supersonic flow
+
+          // Parallel velocity at the sheath entrance
+          const BoutReal visheath = usheath - wsheath;
 
           // Set boundary conditions on flows
           Vi[im] = 2. * visheath - Vi[i];
           NVi[im] = 2. * Mi * nisheath * visheath - NVi[i];
 
+          // Kinetic energy per ion at the sheath entrance: 1/2 m C_i^2 as in
+          // gamma_i, corrected for the parallel velocity v_par = u - w when there
+          // is a binormal drift (equal to 1/2 m v_par^2 when u = C_i)
+          const BoutReal kinetic = 0.5 * Mi * (C_i_sq + SQ(visheath) - SQ(usheath));
+
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath
-          // Note: Here this is negative because visheath < 0
+          // Note: Here this is negative because usheath < 0
+          // Total ion energy flux, minus the energy advected through the boundary
+          // in the parallel direction and by the binormal drift
+          const BoutReal q_advected =
+              (((1 + 1 / (adiabatic - 1)) * tisheath + kinetic) * nisheath * visheath)
+              + exb.targetEnergyFlux(tisheath, nisheath, visheath, Mi, wsheath);
           BoutReal q =
-              ((gamma_i - 1 - 1 / (adiabatic - 1)) * tisheath - 0.5 * Mi * C_i_sq)
-              * nisheath * visheath;
+              ((gamma_i * tisheath + kinetic - 0.5 * Mi * C_i_sq) * nisheath * usheath)
+              - q_advected;
           q = std::min(q, 0.0);
 
           // Multiply by cell area to get power
@@ -803,6 +891,12 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
           ASSERT2(power <= 0.0);
 
           energy_source[i] += power;
+
+          if (diagnose) {
+            // Total losses: sheath sink plus what is advected through the face
+            ion_sheath_energy[i] += (q + q_advected) * areaOverVolume(i, im);
+            ion_sheath_particles[i] += nisheath * usheath * areaOverVolume(i, im);
+          }
 
           if (ion_ee_gamma_max > 0.0) {
             // Ion-induced secondary electron emission
@@ -820,8 +914,9 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
             // Add flow of cold electrons into plasma
             BoutReal vesheath = 0.5 * (Ve[im] + Ve[i]);
+            // Emitted electron flux is proportional to the total ion flux n u
             const BoutReal nvesheath =
-                (nesheath * vesheath) - (ion_ee_gamma * nisheath * visheath);
+                (nesheath * vesheath) - (ion_ee_gamma * nisheath * usheath);
             vesheath = nvesheath / nesheath;
 
             Ve[im] = 2 * vesheath - Ve[i];
@@ -878,20 +973,36 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
           const BoutReal gamma_i = 2.5 + (0.5 * Mi * C_i_sq / tisheath); // + Δγ
 
-          const BoutReal visheath = std::max(sqrt(C_i_sq), // Positive -> into sheath
-                                             Vi[i]);       // Allow supersonic flow
+          // Effective binormal drift velocity at the sheath (zero without drift)
+          const BoutReal wsheath = 0.5 * (exb.W[i] + exb.W[ip]);
+
+          // Total velocity normal to the target, v_par + w
+          const BoutReal usheath = std::max(sqrt(C_i_sq),     // Positive -> into sheath
+                                            Vi[i] + wsheath); // Allow supersonic flow
+
+          // Parallel velocity at the sheath entrance
+          const BoutReal visheath = usheath - wsheath;
 
           // Set boundary conditions on flows
           Vi[ip] = 2. * visheath - Vi[i];
           NVi[ip] = 2. * Mi * nisheath * visheath - NVi[i];
 
+          // Kinetic energy per ion at the sheath entrance: 1/2 m C_i^2 as in
+          // gamma_i, corrected for the parallel velocity v_par = u - w when there
+          // is a binormal drift (equal to 1/2 m v_par^2 when u = C_i)
+          const BoutReal kinetic = 0.5 * Mi * (C_i_sq + SQ(visheath) - SQ(usheath));
+
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath
-          // Note: Here this is positive because visheath > 0
+          // Note: Here this is positive because usheath > 0
+          // Total ion energy flux, minus the energy advected through the boundary
+          // in the parallel direction and by the binormal drift
+          const BoutReal q_advected =
+              (((1 + 1 / (adiabatic - 1)) * tisheath + kinetic) * nisheath * visheath)
+              + exb.targetEnergyFlux(tisheath, nisheath, visheath, Mi, wsheath);
           BoutReal q =
-              ((gamma_i - 1 - 1 / (adiabatic - 1)) * tisheath - 0.5 * C_i_sq * Mi)
-              * nisheath * visheath;
-
+              ((gamma_i * tisheath + kinetic - 0.5 * Mi * C_i_sq) * nisheath * usheath)
+              - q_advected;
           q = std::max(q, 0.0);
 
           // Multiply by cell area to get power
@@ -904,6 +1015,12 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
           ASSERT2(power >= 0.0);
 
           energy_source[i] -= power; // Note: Sign negative because power > 0
+
+          if (diagnose) {
+            // Total losses: sheath sink plus what is advected through the face
+            ion_sheath_energy[i] -= (q + q_advected) * areaOverVolume(i, ip);
+            ion_sheath_particles[i] -= nisheath * usheath * areaOverVolume(i, ip);
+          }
 
           if (ion_ee_gamma_max > 0.0) {
             // Ion-induced secondary electron emission
@@ -921,8 +1038,9 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
             // Add flow of cold electrons into plasma
             BoutReal vesheath = 0.5 * (Ve[ip] + Ve[i]);
+            // Emitted electron flux is proportional to the total ion flux n u
             const BoutReal nvesheath =
-                (nesheath * vesheath) - (ion_ee_gamma * nisheath * visheath);
+                (nesheath * vesheath) - (ion_ee_gamma * nisheath * usheath);
             vesheath = nvesheath / nesheath;
 
             Ve[ip] = 2 * vesheath - Ve[i];
@@ -954,11 +1072,20 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
     // Additional loss of energy through sheath
     // Note: Already includes previously set sources
     set(species["energy_source"], fromFieldAligned(energy_source));
+
+    if (diagnose) {
+      sheath_energy_source[kv.first] = fromFieldAligned(ion_sheath_energy);
+      sheath_particle_source[kv.first] = fromFieldAligned(ion_sheath_particles);
+    }
   }
 
   // Add energy source (negative in cell next to sheath)
   // Note: already includes previously set sources
   set(electrons["energy_source"], fromFieldAligned(electron_energy_source));
+
+  if (diagnose) {
+    sheath_energy_source["e"] = fromFieldAligned(electron_sheath_energy);
+  }
 
   if (IS_SET_NOBOUNDARY(electrons["velocity"])) {
     Ve.clearParallelSlices();
@@ -972,5 +1099,34 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
     // Set the potential, including boundary conditions
     phi.clearParallelSlices();
     setBoundary(state["fields"]["phi"], fromFieldAligned(phi));
+  }
+}
+
+void SheathBoundary::outputVars(Options& state) {
+  if (not diagnose) {
+    return;
+  }
+  const auto Nnorm = get<BoutReal>(state["Nnorm"]);
+  const auto Omega_ci = get<BoutReal>(state["Omega_ci"]);
+  const auto Tnorm = get<BoutReal>(state["Tnorm"]);
+  const BoutReal Pnorm = SI::qe * Tnorm * Nnorm; // Pressure normalisation
+
+  for (const auto& [species_name, source] : sheath_energy_source) {
+    set_with_attrs(state[{"E" + species_name + "_sheath"}], source,
+                   {{"time_dimension", "t"},
+                    {"units", "W / m^3"},
+                    {"conversion", Pnorm * Omega_ci},
+                    {"standard_name", "energy source"},
+                    {"long_name", species_name + " total sheath energy loss"},
+                    {"source", "sheath_boundary"}});
+  }
+  for (const auto& [species_name, source] : sheath_particle_source) {
+    set_with_attrs(state[{"S" + species_name + "_sheath"}], source,
+                   {{"time_dimension", "t"},
+                    {"units", "m^-3 s^-1"},
+                    {"conversion", Nnorm * Omega_ci},
+                    {"standard_name", "particle source"},
+                    {"long_name", species_name + " sheath particle loss"},
+                    {"source", "sheath_boundary"}});
   }
 }

@@ -7,7 +7,7 @@ Usage:
 For each run prints:
   - steadiness (max relative change of n, Te, Ti over the last output)
   - upstream and target temperatures, target densities and their ratio
-  - u / c_s at both targets, where u = v_par + v_E/Theta (generalised Bohm)
+  - u / c_Bohm at both targets, where u = v_par + v_E/Theta (generalised Bohm)
   - particle balance: total source vs flux through the targets
   - energy balance: (sheath losses + kinetic energy given to source particles)
     / (power input + ExB work)
@@ -83,13 +83,17 @@ def load(run_dir):
     return r
 
 
-def analyse(r):
+def analyse(r, bohm_adiabatic=1.0):
+    """bohm_adiabatic: ion adiabatic index in the Bohm speed used by the sheath
+    (1 for sheath_boundary_simple; 5/3 for sheath_boundary, which uses the
+    kinetic speed C_i^2 = (5/3 Ti + Te) / m_i for a single ion species)."""
     cs = np.sqrt((r["Ti"] + r["Te"]) * QE / MP)
+    c_bohm = np.sqrt((bohm_adiabatic * r["Ti"] + r["Te"]) * QE / MP)
     mid = len(cs) // 2
     res = {}
     res["gamma"] = float(np.mean(r["w"])) / (2 * cs[mid])
-    res["u_lower"] = (r["v"][0] + r["w"][0]) / cs[0]
-    res["u_upper"] = (r["v"][-1] + r["w"][-1]) / cs[-1]
+    res["u_lower"] = (r["v"][0] + r["w"][0]) / c_bohm[0]
+    res["u_upper"] = (r["v"][-1] + r["w"][-1]) / c_bohm[-1]
     res["ratio"] = r["n"][-1] / r["n"][0]
     res["Te_up"] = np.max(r["Te"])
     res["Te_lower"] = r["Te"][0]
@@ -131,13 +135,20 @@ def main():
     parser.add_argument("runs", nargs="+")
     parser.add_argument("--plot", default=None)
     parser.add_argument("--labels", default=None)
+    parser.add_argument(
+        "--bohm-adiabatic",
+        type=float,
+        default=1.0,
+        help="Ion adiabatic index in the sheath Bohm speed: 1 for "
+        "sheath_boundary_simple (default), 5/3 for sheath_boundary",
+    )
     args = parser.parse_args()
 
     labels = args.labels.split(",") if args.labels else args.runs
     loaded = []
     for run_dir, label in zip(args.runs, labels):
         r = load(run_dir)
-        res = analyse(r)
+        res = analyse(r, args.bohm_adiabatic)
         loaded.append((label, r, res))
         print(
             f"{label}: gamma={res['gamma']:+.3f} "
@@ -145,7 +156,7 @@ def main():
             f"{res['Te_upper']:.1f} eV | Ti targets {res['Ti_lower']:.1f} / "
             f"{res['Ti_upper']:.1f} eV "
             f"| n_up/n_lo={res['ratio']:.3f} (Kriete isothermal {res['ratio_kriete']:.3f}) "
-            f"| u/c_s {res['u_lower']:+.3f} {res['u_upper']:+.3f} "
+            f"| u/c_Bohm {res['u_lower']:+.3f} {res['u_upper']:+.3f} "
             f"| particles out/in {res['particle_balance']:.4f} "
             f"| sheath/input {res['sheath_over_in']:.4f}, "
             f"ExB work {100 * res['work_exb'] / res['power_in']:+.1f}%, "

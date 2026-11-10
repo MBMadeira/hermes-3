@@ -2,6 +2,10 @@
 #ifndef SHEATH_BOUNDARY_H
 #define SHEATH_BOUNDARY_H
 
+#include <map>
+#include <string>
+
+#include "binormal_exb_drift.hxx"
 #include "component.hxx"
 
 #include <bout/bout_types.hxx>
@@ -36,6 +40,10 @@ struct SheathBoundary : public NamedComponent<SheathBoundary> {
   ///   surface (0 to 1)
   ///   - always_set_phi           Always set phi field? Default is to only modify if
   ///   already set
+  ///   - exb_drift                Name of a binormal_exb_drift component. If set,
+  ///   the Bohm condition is applied to the total velocity normal to the target,
+  ///   v_par + v_E/Theta (see below)
+  ///   - diagnose                 Save the sheath particle and energy losses?
   SheathBoundary(std::string name, Options& options, Solver*);
 
   /// Ion-induced secondary electron emission yield γ(E_i)
@@ -66,6 +74,17 @@ private:
   BoutReal ion_ee_E_th;      ///< Threshold energy [normalised]
   BoutReal ion_ee_E_max;     ///< Peak energy [normalised]
   BoutReal ion_ee_p;         ///< Shape coefficient
+
+  /// Binormal ExB drift settings (see binormal_exb_drift.hxx). The effective
+  /// parallel velocity w = v_E / Theta is stored field aligned, and is zero if
+  /// no drift is configured.
+  bool use_exb_drift{false};
+  BinormalExBSettings exb;
+
+  bool diagnose{false}; ///< Save sheath losses?
+  /// Total energy and particle losses through the sheaths for each species,
+  /// as sources in the cells next to the targets (negative)
+  std::map<std::string, Field3D> sheath_energy_source, sheath_particle_source;
 
   ///
   /// # Inputs
@@ -107,12 +126,25 @@ private:
   /// - fields
   ///   - phi   Sets boundary
   ///
+  /// With a binormal ExB drift (option exb_drift), the Bohm-Chodura condition
+  /// applies to the velocity normal to the target, which in the 1D island model
+  /// is u = v_par + w with w = v_E / Theta. The ion parallel velocity at the
+  /// sheath entrance is then v_par = u - w with |u| >= C_i. The sheath potential
+  /// and secondary emission use the total ion flux n u and the actual ion kinetic
+  /// energy 1/2 m v_par^2. The electron parallel velocity is set to u_e - w, and
+  /// the energy carried through the target by the drift component is subtracted
+  /// from the sheath heat fluxes. Without drift this reduces exactly to the
+  /// standard boundary conditions.
+  ///
   /// If the field phi is set, then this is used in the boundary condition.
   /// If not set, phi at the boundary is calculated and stored in the state.
   /// Note that phi in the domain will not be set, so will be invalid data.
   ///
   ///
   void transform_impl(GuardedOptions& state) override;
+
+public:
+  void outputVars(Options& state) override;
 };
 
 namespace {

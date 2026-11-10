@@ -1403,8 +1403,8 @@ sheath component, so the total particle flux to a target is
 The drift changes the sheath boundary condition: the Bohm-Chodura condition
 applies to the velocity normal to the target, which in this geometry is
 :math:`u = v_{||} + v_E/\Theta`. This is implemented in
-:ref:`sec-sheath_boundary_simple` through the ``exb_drift`` option, which must
-name the drift component. Imposing :math:`v_{||} = \pm c_s` instead makes the
+:ref:`sec-sheath_boundary_simple` and in ``sheath_boundary`` through the
+``exb_drift`` option, which must name the drift component. Imposing :math:`v_{||} = \pm c_s` instead makes the
 problem ill-posed: one target becomes subsonic and the other supersonic.
 
 .. code-block:: ini
@@ -1417,7 +1417,7 @@ problem ill-posed: one target becomes subsonic and the other supersonic.
    Theta = 1e-3  # Field line pitch inside the island
    diagnose = true
 
-   [sheath_boundary_simple]
+   [sheath_boundary_simple]   # or [sheath_boundary]
    exb_drift = binormal_exb_drift   # Bohm condition on v_par + vE/Theta
 
 Both ``vE`` and ``Theta`` may be functions of position. The operators are
