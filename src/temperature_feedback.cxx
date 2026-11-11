@@ -12,14 +12,9 @@ void TemperatureFeedback::transform_impl(GuardedOptions& state) {
 
   auto time = get<BoutReal>(state["time"]);
 
-  for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
-    int jz = 0;
-
-    if (control_target_temperature) {
-      error = temperature_setpoint - T(r.ind, mesh->yend, jz);
-    } else {
-      error = temperature_setpoint - T(r.ind, mesh->ystart, jz);
-    }
+  // PI controller: update the source multiplier from the measured temperature
+  auto update_controller = [&](BoutReal temperature_measured) {
+    error = temperature_setpoint - temperature_measured;
 
     // PI controller, using crude integral of the error
     if (temperature_error_lasttime < 0.0) {
@@ -50,20 +45,32 @@ void TemperatureFeedback::transform_impl(GuardedOptions& state) {
 
     temperature_error_last = error;
     temperature_error_lasttime = time;
-    break;
-  }
+  };
 
-  // The upstream temperature is only present in processor 0, so for other
-  // processors the above loop is skipped. Need to broadcast the values from
-  // processor 0 to the other processors
-  if (control_target_temperature) {
-    MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
-    MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
-    MPI_Bcast(&integral_term, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
+  if (measurement.usesWeight()) {
+    // Weighted average over all processors: the same on every processor, so
+    // every processor updates the controller
+    update_controller(measurement.average(T));
   } else {
-    MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, 0, BoutComm::get());
-    MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, 0, BoutComm::get());
-    MPI_Bcast(&integral_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+    for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
+      int jz = 0;
+      update_controller(control_target_temperature ? T(r.ind, mesh->yend, jz)
+                                                   : T(r.ind, mesh->ystart, jz));
+      break;
+    }
+
+    // The upstream temperature is only present in processor 0, so for other
+    // processors the above loop is skipped. Need to broadcast the values from
+    // processor 0 to the other processors
+    if (control_target_temperature) {
+      MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
+      MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
+      MPI_Bcast(&integral_term, 1, MPI_DOUBLE, BoutComm::size() - 1, BoutComm::get());
+    } else {
+      MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, 0, BoutComm::get());
+      MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+      MPI_Bcast(&integral_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+    }
   }
   ASSERT2(std::isfinite(source_multiplier));
 

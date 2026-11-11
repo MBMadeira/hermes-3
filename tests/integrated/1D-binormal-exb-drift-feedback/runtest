@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+
+# Binormal ExB drift in a 1D island divertor SOL with feedback control of the
+# upstream density and temperature, measured around the mid-point between the
+# two targets (density_upstream_weight, temperature_measurement_weight), and
+# with ion viscosity, thermal force, fixed fraction radiation, trace helium
+# ions, neutral_boundary and simple_pump.
+#
+# Checks that, in steady state,
+#   - the controllers hold the weighted mid-point density and temperature
+#   - particles are conserved: the density feedback source equals the pumped
+#     flux, (1 - R) * flux into the targets + atoms removed by the pump; ions:
+#     flux into the targets = feedback source + ionisation - recombination;
+#     helium: core source = flux into the targets
+#   - energy is conserved: sheath losses + atom energy lost to the walls +
+#     radiation and ionisation + kinetic energy given to the helium source
+#     particles = feedback power + ExB work + energy of the recycled atoms
+#   - the drift makes the upper target denser
+#   - the right-hand side is the same on 1 and 2 processors (the measurement
+#     is an average over both processors)
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from boutdata import restart
+from boutdata.collect import collect
+from boututils.run_wrapper import launch_safe
+
+vE = 66.0  # [m/s]
+R = 0.95  # d+:target_recycle_multiplier
+density_setpoint = 6e18  # d+:density_upstream [m^-3]
+temperature_setpoint = 120.0  # e:temperature_setpoint [eV]
+# Power source of temperature_feedback: the same SPe_feedback (an energy
+# source) is applied to e and d+
+feedback_power_species = 2
+
+QE = 1.602176634e-19
+MP = 1.67262192595e-27
+
+steady_tolerance = 1e-3
+setpoint_tolerance = 1e-3
+particle_tolerance = 1e-3
+energy_tolerance = 0.03
+# Relative to the size of the right-hand side at the steady state. The
+# measurement sums over processors in a different order, and the controller
+# amplifies the rounding difference
+mpi_tolerance = 1e-6
+
+hermes_candidates = [Path("../../../hermes-3"), Path("../../../build/hermes-3")]
+hermes_exec = next((path for path in hermes_candidates if path.exists()), None)
+if hermes_exec is None:
+    raise FileNotFoundError("Could not find hermes-3 executable in repo root or build/")
+
+run_root = Path("runs")
+input_file = Path("data/BOUT.inp")
+
+
+def prepare(name):
+    case_dir = run_root / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    (case_dir / "BOUT.inp").write_text(input_file.read_text())
+    return case_dir
+
+
+def launch(case_dir, args, nproc=1):
+    print(f"Running {case_dir}: {args} on {nproc} processor(s)")
+    status, out = launch_safe(
+        f"{hermes_exec} -d {case_dir} {args}", nproc=nproc, pipe=True
+    )
+    (case_dir / "run.log").write_text(out)
+    if status != 0:
+        raise RuntimeError(f"Hermes run failed for {case_dir}")
+
+
+def get(case_dir, var, it=-1):
+    """Variable in SI units at output it (applies the conversion attribute)"""
+    data = collect(var, path=str(case_dir), info=False)
+    conversion = float(data.attributes.get("conversion", 1.0))
+    values = np.asarray(data).squeeze() * conversion
+    return values[it] if values.ndim > 1 else values
+
+
+failures = []
+
+
+def check(name, value, ok):
+    print(f"    {name}: {value} -> {'Passed' if ok else 'Failed'}")
+    if not ok:
+        failures.append(name)
+
+
+case = prepare("vE_plus")
+launch(case, f"drift:vE={vE}")
+print(f"  vE = {vE}")
+
+rho_s0 = float(collect("rho_s0", path=str(case), info=False))
+dy = np.asarray(collect("dy", path=str(case), info=False)).squeeze()
+g_22 = np.asarray(collect("g_22", path=str(case), info=False)).squeeze()
+ds = dy * np.sqrt(g_22) * rho_s0  # Parallel cell length [m] (J = 1)
+s = np.cumsum(ds) - 0.5 * ds
+# Measurement weight, as in data/BOUT.inp (Theta = 1e-3)
+weight = np.exp(-(((1e-3 * (s - 0.5 * np.sum(ds))) / 0.02) ** 2)) * ds
+
+change = max(
+    np.max(np.abs(get(case, k) - get(case, k, -2)) / np.abs(get(case, k)))
+    for k in ["Nd+", "Pd+", "Pe", "Nd", "Pd", "Nhe+", "Phe+"]
+)
+check("steady state", f"{change:.1e}", change < steady_tolerance)
+
+N = get(case, "Nd+")
+Te = get(case, "Te")
+n_measured = np.sum(weight * N) / np.sum(weight)
+T_measured = np.sum(weight * Te) / np.sum(weight)
+check(
+    "upstream density and temperature at the setpoints",
+    f"{n_measured:.4e} m^-3, {T_measured:.3f} eV",
+    abs(n_measured / density_setpoint - 1) < setpoint_tolerance
+    and abs(T_measured / temperature_setpoint - 1) < setpoint_tolerance,
+)
+
+
+def target_fluxes(species):
+    S = get(case, f"S{species}_sheath")  # Sign differs by target
+    return abs(S[0]) * ds[0], abs(S[-1]) * ds[-1]
+
+
+flux_lower, flux_upper = target_fluxes("d+")
+flux = flux_lower + flux_upper
+feedback = np.sum(get(case, "Sd+_feedback") * ds)
+pumped = -np.sum(get(case, "simple_pump_sink_d") * ds)
+ionisation = np.sum(get(case, "Sd+_iz") * ds)
+recombination = -np.sum(get(case, "Sd+_rec") * ds)
+he_lower, he_upper = target_fluxes("he+")
+he_core = np.sum(get(case, "She+_src") * ds)
+for name, ratio in [
+    (
+        "D: ((1 - R) * target flux + pump) / feedback source",
+        ((1 - R) * flux + pumped) / feedback,
+    ),
+    (
+        "D+: target flux / (feedback + ionisation - recombination)",
+        flux / (feedback + ionisation - recombination),
+    ),
+    ("He+: target flux / core source", (he_lower + he_upper) / he_core),
+]:
+    check(name, f"{ratio:.5f}", abs(ratio - 1) < particle_tolerance)
+
+# Energy balance per unit area
+power_in = feedback_power_species * np.sum(get(case, "SPe_feedback") * ds)
+sheath = -np.sum(
+    (get(case, "Ed+_sheath") + get(case, "Ehe+_sheath") + get(case, "Ee_sheath")) * ds
+)
+wall = -np.sum(get(case, "Ed_target_refl") * ds)
+radiation = -np.sum(
+    (get(case, "Rd+_ex") + get(case, "Rd+_rec") + get(case, "Rfixed_fraction_nitrogen"))
+    * ds
+)
+recycle_energy = np.sum(get(case, "Ed_target_recycle") * ds)
+W = get(case, "w_binormal_exb_drift")
+p_total = get(case, "Pd+") + get(case, "Phe+") + get(case, "Pe")
+work_exb = np.mean(W) * (p_total[-1] - p_total[0])
+# The density feedback returns the kinetic energy given to its source
+# particles as heat; the fixed helium source does not
+dilution = np.sum(0.5 * 4 * MP * get(case, "Vhe+") ** 2 * get(case, "She+_src") * ds)
+balance = (sheath + wall + radiation + dilution) / (
+    power_in + work_exb + recycle_energy
+)
+check(
+    "energy balance",
+    f"{balance:.4f} (input {power_in:.3g} W/m^2; sheaths {sheath / power_in:.3f}, "
+    f"radiation {radiation / power_in:.3f}, ExB work {work_exb / power_in:+.3f})",
+    abs(balance - 1) < energy_tolerance,
+)
+
+check(
+    "drift towards the upper target makes it denser",
+    f"n_upper / n_lower {N[-1] / N[0]:.2f}, flux ratio {flux_upper / flux_lower:.2f}",
+    N[-1] > N[0] and flux_upper > flux_lower,
+)
+
+# Right-hand side at the steady state on 1 and 2 processors: restart and take
+# a negligible time step (above the roundoff of the restart time)
+names = ["Nd+", "Pd+", "Pe", "NVd+", "Nd", "Pd", "NVd", "Nhe+", "Phe+", "NVhe+"]
+rhs = {}
+for nproc in [1, 2]:
+    case_dir = prepare(f"rhs_np{nproc}")
+    restart.redistribute(nproc, path=str(case), output=str(case_dir), myg=2)
+    launch(case_dir, f"restart drift:vE={vE} nout=1 timestep=1e-4", nproc)
+    rhs[nproc] = {
+        k: np.asarray(collect(f"ddt({k})", path=str(case_dir), info=False))[-1].ravel()
+        for k in names
+    }
+worst = max(
+    np.max(np.abs(rhs[2][k] - rhs[1][k])) / np.max(np.abs(rhs[1][k])) for k in names
+)
+check("right-hand side on 1 vs 2 processors", f"{worst:.1e}", worst < mpi_tolerance)
+
+if failures:
+    print(f"\n => Failed: {', '.join(failures)}")
+    sys.exit(1)
+
+print("\n => All passed")
+sys.exit(0)

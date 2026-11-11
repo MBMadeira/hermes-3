@@ -44,6 +44,30 @@ behaviour. Note that this requires some other domain particle sink to ensure con
 The integral component takes a long time to change value, which can result in large overshoots if the initial guess was too small.
 This setting mitigates this by disabling the integral term if the density is above the desired value.
 
+Measuring the upstream density elsewhere
+----------------------------------------
+
+By default the upstream density is that of the first cell next to the lower
+y boundary. In a domain with a target at each end (e.g. the 1D island
+divertor models with a binormal E×B drift, which cannot use a half domain)
+"upstream" is inside the domain. Set ``density_upstream_weight`` to measure
+the upstream density as the volume-weighted average
+:math:`\sum w n\, dV / \sum w\, dV` over all cells and processors, where
+:math:`w \ge 0` is the weight:
+
+.. code-block:: ini
+
+   [d+]
+   type = ..., upstream_density_feedback
+   density_upstream = 8e18
+   # Average over a few cells around the mid-point, ypol = 0
+   density_upstream_weight = exp(-(mesh:ypol / 0.02)^2)
+
+The weight can also select e.g. the location of a diagnostic. With a weight,
+every processor computes the same measured value and controller state.
+``temperature_feedback`` has the same option, ``temperature_measurement_weight``,
+which overrides ``control_target_temperature``.
+
 Notes:
    - The example cases have their PI parameters tuned properly without the need of the above two settings.
    - Under certain conditions, the use of the PI controller can make the upstream density enter a very small oscillation (~0.05% of upstream value).
@@ -159,6 +183,13 @@ Fine details
 
 Finding the detachment front
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+By default the target is at the upper y boundary and the search starts at the
+lower y boundary. In a domain with a target at each end, choose the target with
+``target = upper`` or ``target = lower`` and set ``upstream_position`` (distance
+from the lower y boundary, in m) to a point upstream of both fronts, e.g.
+``mesh:length / 2``. The search then runs from ``upstream_position`` towards the
+chosen target, and the front location is the distance from that target.
 
 We define the detachment front as the point where the neutral density
 (``N_neutral_species``) becomes larger than the electron density
@@ -295,6 +326,13 @@ Input Parameters
    ``actuator='power'`` this will set ``source_shape=Ps::source_shape``
    where ``s=species_for_source_shape``, and if ``actuator='particles'``
    this will set ``source_shape=Ns::source_shape``.
+
+-  **``target``**: Which target's front to control: ``upper`` (default)
+   or ``lower`` y boundary.
+
+-  **``upstream_position``**: Where the search for the front starts, as
+   distance from the lower y boundary in metres. Default: the boundary
+   opposite the target.
 
 -  **``neutral_species``**: Indicates the main neutral species in the
    plasma. This species is used to determine the location of the

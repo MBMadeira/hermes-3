@@ -3,6 +3,7 @@
 #define UPSTREAM_DENSITY_FEEDBACK_H
 
 #include "component.hxx"
+#include "feedback_measurement.hxx"
 
 /// Adds a time-varying density source, depending on the difference
 /// between the upstream density at y=0 and the specified value
@@ -36,8 +37,16 @@ struct UpstreamDensityFeedback : public NamedComponent<UpstreamDensityFeedback> 
     Options& options = alloptions[name];
 
     density_upstream =
-        options["density_upstream"].doc("Upstream density (at y=0) [m^-3]").as<BoutReal>()
+        options["density_upstream"]
+            .doc("Upstream density [m^-3]. Measured in the first cell next to the lower "
+                 "y boundary, or as set by density_upstream_weight")
+            .as<BoutReal>()
         / Nnorm;
+
+    // Optional: measure the upstream density as a weighted average, e.g. in the
+    // middle of a domain with targets at both ends
+    upstream = FeedbackMeasurement(options["density_upstream_weight"],
+                                   "the upstream density of " + name);
 
     density_controller_p = options["density_controller_p"]
                                .doc("Feedback controller proportional (p) parameter")
@@ -139,7 +148,8 @@ struct UpstreamDensityFeedback : public NamedComponent<UpstreamDensityFeedback> 
   static constexpr auto type = "upstream_density_feedback";
 
 private:
-  BoutReal density_upstream;                           ///< Normalised upstream density
+  BoutReal density_upstream;    ///< Normalised upstream density
+  FeedbackMeasurement upstream; ///< Where the upstream density is measured
   BoutReal density_controller_p, density_controller_i; ///< PI controller parameters
   BoutReal error;
   BoutReal density_error_integral{0.0}; ///< Time integral of the error

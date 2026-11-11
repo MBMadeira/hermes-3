@@ -3,6 +3,7 @@
 #define temperature_feedback_H
 
 #include "component.hxx"
+#include "feedback_measurement.hxx"
 #include <bout/constants.hxx>
 
 /// Adds a time-varying temperature source, depending on the difference
@@ -40,7 +41,8 @@ struct TemperatureFeedback : public NamedComponent<TemperatureFeedback> {
 
     temperature_setpoint = options["temperature_setpoint"]
                                .doc("Desired temperature in eV, upstream (y=0) unless "
-                                    "control_target_temperature=true")
+                                    "control_target_temperature=true or "
+                                    "temperature_measurement_weight is set")
                                .as<BoutReal>()
                            / Tnorm;
 
@@ -49,6 +51,12 @@ struct TemperatureFeedback : public NamedComponent<TemperatureFeedback> {
             .doc("Adjust the pressure source to match the upstream (if false) or target "
                  "(if true) temperature")
             .withDefault<bool>(false);
+
+    // Optional: measure the temperature as a weighted average, e.g. in the
+    // middle of a domain with targets at both ends. Overrides
+    // control_target_temperature.
+    measurement = FeedbackMeasurement(options["temperature_measurement_weight"],
+                                      "the temperature of " + name);
 
     temperature_controller_p = options["temperature_controller_p"]
                                    .doc("Feedback controller proportional (p) parameter")
@@ -191,6 +199,7 @@ private:
 
   bool
       control_target_temperature; ///<Adjust the pressure source to match the upstream (if false) or target (if true) temperature
+  FeedbackMeasurement measurement;    ///< Weighted measurement location, if set
   bool temperature_integral_positive; ///< Force integral term to be positive?
   bool temperature_source_positive;   ///< Force source to be positive?
 

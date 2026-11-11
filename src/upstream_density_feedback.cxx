@@ -12,9 +12,9 @@ void UpstreamDensityFeedback::transform_impl(GuardedOptions& state) {
 
   auto time = get<BoutReal>(state["time"]);
 
-  for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
-    int jz = 0;
-    error = density_upstream - N(r.ind, mesh->ystart, jz);
+  // PI controller: update the source multiplier from the measured upstream density
+  auto update_controller = [&](BoutReal density_measured) {
+    error = density_upstream - density_measured;
 
     // PI controller, using crude integral of the error
     if (density_error_lasttime < 0.0) {
@@ -45,15 +45,26 @@ void UpstreamDensityFeedback::transform_impl(GuardedOptions& state) {
 
     density_error_last = error;
     density_error_lasttime = time;
-    break;
-  }
+  };
 
-  // The upstream density is only present in processor 0, so for other
-  // processors the above loop is skipped. Need to broadcast the values from
-  // processor 0 to the other processors
-  MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, 0, BoutComm::get());
-  MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, 0, BoutComm::get());
-  MPI_Bcast(&integral_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+  if (upstream.usesWeight()) {
+    // Weighted average over all processors: the same on every processor, so
+    // every processor updates the controller
+    update_controller(upstream.average(N));
+  } else {
+    for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
+      int jz = 0;
+      update_controller(N(r.ind, mesh->ystart, jz));
+      break;
+    }
+
+    // The upstream density is only present in processor 0, so for other
+    // processors the above loop is skipped. Need to broadcast the values from
+    // processor 0 to the other processors
+    MPI_Bcast(&source_multiplier, 1, MPI_DOUBLE, 0, BoutComm::get());
+    MPI_Bcast(&proportional_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+    MPI_Bcast(&integral_term, 1, MPI_DOUBLE, 0, BoutComm::get());
+  }
   ASSERT2(std::isfinite(source_multiplier));
 
   // Scale the source and add to the species density source

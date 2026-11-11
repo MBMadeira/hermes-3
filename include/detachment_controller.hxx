@@ -64,6 +64,32 @@ struct DetachmentController : public NamedComponent<DetachmentController> {
                           .doc("Which is the main neutral species?")
                           .as<std::string>();
 
+    // Which target's detachment front to control. The front is the first point
+    // where the neutral density exceeds the electron density, searching from
+    // upstream_position towards the target, and its location is the distance
+    // from that target.
+    const std::string target =
+        detachment_controller_options["target"]
+            .doc("Target whose detachment front is controlled: 'upper' (default) or "
+                 "'lower' y boundary")
+            .withDefault<std::string>("upper");
+    if (target == "upper") {
+      front_at_lower_target = false;
+    } else if (target == "lower") {
+      front_at_lower_target = true;
+    } else {
+      throw BoutException("detachment_controller:target must be 'upper' or 'lower', not "
+                          "'{:s}'",
+                          target);
+    }
+    upstream_position =
+        detachment_controller_options["upstream_position"]
+            .doc("Where the search for the front starts, as distance from the lower y "
+                 "boundary [m]. Default: the boundary opposite the target. In a domain "
+                 "with targets at both ends, set it upstream of both fronts, e.g. "
+                 "mesh:length / 2.")
+            .withDefault<BoutReal>(front_at_lower_target ? connection_length : 0.0);
+
     actuator =
         detachment_controller_options["actuator"]
             .doc(
@@ -288,6 +314,8 @@ struct DetachmentController : public NamedComponent<DetachmentController> {
 private:
   // Inputs variables
   BoutReal connection_length;
+  bool front_at_lower_target{false}; ///< Control the front at the lower y target?
+  BoutReal upstream_position{0.0};   ///< Search start, distance from lower boundary [m]
   BoutReal detachment_front_setpoint;
   BoutReal min_time_for_change;
   BoutReal min_error_for_change;

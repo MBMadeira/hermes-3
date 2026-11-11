@@ -1,0 +1,225 @@
+# Test input: binormal ExB drift in a 1D island divertor SOL with most of the
+# components used in 1D tokamak models, and the upstream density and
+# temperature controlled by feedback at the mid-point between the targets.
+#
+# Based on examples/stellarator-1D/kriete-exb-drift-recycling (see there for
+# the geometry, recycling and neutral transport), at lower resolution, with
+#  - upstream_density_feedback on d+ and temperature_feedback on e, both
+#    measured as a weighted average around the mid-point (ypol = 0)
+#  - braginskii_ion_viscosity and braginskii_thermal_force
+#  - 1% fixed fraction nitrogen radiation
+#  - trace helium ions with a fixed core source, pumped at the targets (no
+#    helium atoms)
+#  - neutral_boundary and a simple_pump near the targets for the atoms
+#
+# Particles leave by pumping at the targets (1 - R of the target flux) and by
+# the simple pump; the density feedback replaces them.
+
+nout = 100
+timestep = 1e6  # Time between outputs [1/Omega_ci]
+
+MXG = 0  # No guard cells in X
+
+[mesh]
+nx = 1
+ny = 100   # Resolution along the field line
+nz = 1
+J = 1
+
+Theta = 1e-3      # Field line pitch inside the island
+y_target = 0.5    # Island poloidal distance from mid-point to each target [m]
+y_xpoint = 0.5    # Island poloidal distance from mid-point to each X-point [m]
+                  # (X-points at the targets; see
+                  # examples/stellarator-1D/kriete-exb-drift/README.md)
+
+length = 2 * y_target / Theta   # Parallel length target-to-target [m]
+
+# Grid spacing packed towards both targets. dymin is the spacing at the targets
+# as a fraction of the average; the average spacing is length / ny.
+dymin = 0.2
+dy = (length / ny) * (1 - (1 - dymin) * cos(y))
+
+ypos = length / (2*pi) * (y - (1 - dymin) * sin(y))   # Parallel position s [m]
+ypol = Theta * (ypos - length / 2)                     # Island poloidal position [m]
+
+# Source region (between the X-points)
+in_source = H(y_xpoint - abs(ypol))
+source_length = 2 * y_xpoint / Theta   # Parallel length of the source region [m]
+
+ixseps1 = -1   # Necessary to set boundary conditions in y
+ixseps2 = -1
+
+[hermes]
+components = (d+, d, he+, e,
+              sheath_boundary_simple, binormal_exb_drift, sound_speed,
+              braginskii_collisions, braginskii_friction, braginskii_heat_exchange,
+              braginskii_conduction, recycling, reactions, braginskii_thermal_force, electron_force_balance,
+              neutral_parallel_diffusion, braginskii_ion_viscosity, fixed_fraction_nitrogen)
+
+normalise_metric = true
+
+Nnorm = 1e19   # [m^-3]
+Bnorm = 2.5    # [T]
+Tnorm = 100    # [eV]
+
+[solver]
+mxstep = 100000
+atol = 1e-7
+rtol = 1e-5
+cvode_precon_method = bbd
+mudq = 30
+mldq = 30
+mukeep = 30
+mlkeep = 30
+
+[drift]
+# Parameters of the drift (not a component)
+vE = 66
+
+[binormal_exb_drift]
+Theta = mesh:Theta
+vE = drift:vE
+diagnose = true
+
+[sheath_boundary_simple]
+# Apply the Bohm condition to v_par + v_E / Theta
+exb_drift = binormal_exb_drift
+diagnose = true
+
+[recycling]
+species = d+
+# Recycle the total flux into the targets, n (v_par + v_E / Theta)
+exb_drift = binormal_exb_drift
+
+[reactions]
+diagnose = true
+type = (
+        d + e -> d+ + 2e,     # Deuterium ionisation
+        d+ + e -> d,          # Deuterium recombination
+        d + d+ -> d+ + d,     # Charge exchange
+       )
+
+[neutral_parallel_diffusion]
+# Parallel projection of cross-field neutral diffusion: 1 / Theta^2
+dneut = 1 / mesh:Theta^2
+diagnose = true
+
+[sound_speed]
+
+[electron_force_balance]
+
+[braginskii_collisions]
+
+[braginskii_friction]
+
+[braginskii_heat_exchange]
+
+[braginskii_conduction]
+
+####################################
+
+[d+]  # Deuterium ions
+type = evolve_density, evolve_momentum, evolve_pressure, upstream_density_feedback
+density_upstream = 6e18   # Upstream density setpoint [m^-3]
+density_upstream_weight = exp(-(mesh:ypol / 0.02)^2)   # Measured around the mid-point
+density_controller_p = 5e2
+density_controller_i = 5e-4
+density_source_positive = false
+
+charge = 1
+AA = 2
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+recycle_as = d
+target_recycle = true
+target_recycle_multiplier = 0.95
+target_recycle_energy = 3         # Energy of recycled atoms [eV]
+
+[Nd+]
+function = 1
+
+source_shape = 1e20 * mesh:in_source   # Scaled by the density feedback [m^-3 s^-1]
+
+[Pd+]
+function = 1
+
+# Ion power set by the temperature feedback on electrons
+
+[NVd+]
+function = 0
+
+####################################
+
+[d]  # Deuterium atoms
+type = evolve_density, evolve_momentum, evolve_pressure, neutral_boundary, simple_pump
+residence_time = 1e-2   # Pumping time constant [s]
+sink_shape = H(abs(mesh:ypol) - 0.45)   # Pump within 5 cm of the targets
+
+charge = 0
+AA = 2
+
+thermal_conduction = true
+diagnose = true
+
+[Nd]
+function = 0.001
+
+[Pd]
+function = 0.0001
+
+[NVd]
+function = 0
+
+####################################
+
+[e]  # Electrons
+type = quasineutral, evolve_pressure, zero_current, temperature_feedback
+temperature_setpoint = 120   # Upstream electron temperature setpoint [eV]
+temperature_measurement_weight = exp(-(mesh:ypol / 0.02)^2)   # Around the mid-point
+temperature_controller_p = 1e1
+temperature_controller_i = 1e-2
+species_for_temperature_feedback = e, d+
+scaling_factors_for_temperature_feedback = 1.0, 1.0   # Same power to ions and electrons
+
+charge = -1
+AA = 1/1836
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+[Pe]
+function = `Pd+:function`
+
+# Shape of the power source scaled by the temperature feedback, for e and d+
+source_shape = 6e7 / mesh:source_length * mesh:in_source
+
+
+
+[braginskii_thermal_force]
+override_ion_mass_restrictions = true   # He is not much heavier than D
+
+[braginskii_ion_viscosity]
+
+[fixed_fraction_nitrogen]
+fraction = 0.01
+diagnose = true
+
+[he+]  # Helium ions (trace, pumped at the targets; no atoms)
+type = evolve_density, evolve_momentum, evolve_pressure
+charge = 1
+AA = 4
+thermal_conduction = true
+diagnose = true
+
+[Nhe+]
+function = 0.01
+flux = 2e21   # Core helium flux [m^-2 s^-1]
+source = flux / mesh:source_length * mesh:in_source
+
+[Phe+]
+function = 0.01
+
+[NVhe+]
+function = 0
