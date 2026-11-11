@@ -450,6 +450,24 @@ the word "target" with either "sol" or "pfr".
    target_fast_recycle_energy_factor = 0.70
    target_fast_recycle_fraction = 0.80
 
+Recycling with a binormal E×B drift
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In 1D stellarator island divertor models with a `binormal_exb_drift`, the flux of ions into a
+target is :math:`n\left(v_{||} + v_E/\Theta\right)`, not :math:`n v_{||}`. Set ``exb_drift`` in the
+``recycling`` section to the name of the drift component (as in the sheath component) so that this
+total flux is recycled, and fast recycling uses :math:`\gamma_i T_i n \left(v_{||} + v_E/\Theta\right)`.
+Without this option the drift's share of the target flux is lost to the pump.
+
+.. code-block:: ini
+
+   [recycling]
+   species = d+
+   exb_drift = binormal_exb_drift
+
+   [sheath_boundary_simple]
+   exb_drift = binormal_exb_drift
+
 Neutral pump
 ^^^^^^^^^^^^^^^
 

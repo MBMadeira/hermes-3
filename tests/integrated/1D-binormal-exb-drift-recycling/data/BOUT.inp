@@ -1,0 +1,172 @@
+# Test input: binormal ExB drift with neutrals and recycling at both targets.
+# Copy of examples/stellarator-1D/kriete-exb-drift-recycling/BOUT.inp at lower
+# resolution; see that file for a description.
+
+nout = 20
+timestep = 5e6  # Time between outputs [1/Omega_ci]
+
+MXG = 0  # No guard cells in X
+
+[mesh]
+nx = 1
+ny = 100   # Resolution along the field line
+nz = 1
+J = 1
+
+Theta = 1e-3      # Field line pitch inside the island
+y_target = 0.5    # Island poloidal distance from mid-point to each target [m]
+y_xpoint = 0.5    # Island poloidal distance from mid-point to each X-point [m]
+                  # (X-points at the targets; see
+                  # examples/stellarator-1D/kriete-exb-drift/README.md)
+
+length = 2 * y_target / Theta   # Parallel length target-to-target [m]
+
+# Grid spacing packed towards both targets. dymin is the spacing at the targets
+# as a fraction of the average; the average spacing is length / ny.
+dymin = 0.2
+dy = (length / ny) * (1 - (1 - dymin) * cos(y))
+
+ypos = length / (2*pi) * (y - (1 - dymin) * sin(y))   # Parallel position s [m]
+ypol = Theta * (ypos - length / 2)                     # Island poloidal position [m]
+
+# Source region (between the X-points)
+in_source = H(y_xpoint - abs(ypol))
+source_length = 2 * y_xpoint / Theta   # Parallel length of the source region [m]
+
+ixseps1 = -1   # Necessary to set boundary conditions in y
+ixseps2 = -1
+
+[hermes]
+components = (d+, d, e,
+              sheath_boundary_simple, binormal_exb_drift, sound_speed,
+              braginskii_collisions, braginskii_friction, braginskii_heat_exchange,
+              braginskii_conduction, recycling, reactions, electron_force_balance,
+              neutral_parallel_diffusion)
+
+normalise_metric = true
+
+Nnorm = 1e19   # [m^-3]
+Bnorm = 2.5    # [T]
+Tnorm = 100    # [eV]
+
+[solver]
+mxstep = 100000
+atol = 1e-7
+rtol = 1e-5
+cvode_precon_method = bbd
+mudq = 21
+mldq = 21
+mukeep = 21
+mlkeep = 21
+
+[drift]
+# Parameters of the drift (not a component)
+vE = 66     # Binormal ExB velocity [m/s]. Positive towards the upper target.
+
+[binormal_exb_drift]
+Theta = mesh:Theta
+vE = drift:vE
+diagnose = true
+
+[sheath_boundary_simple]
+# Apply the Bohm condition to v_par + v_E / Theta
+exb_drift = binormal_exb_drift
+diagnose = true
+
+[recycling]
+species = d+
+# Recycle the total flux into the targets, n (v_par + v_E / Theta)
+exb_drift = binormal_exb_drift
+
+[reactions]
+diagnose = true
+type = (
+        d + e -> d+ + 2e,     # Deuterium ionisation
+        d+ + e -> d,          # Deuterium recombination
+        d + d+ -> d+ + d,     # Charge exchange
+       )
+
+[neutral_parallel_diffusion]
+# Parallel projection of cross-field neutral diffusion: 1 / Theta^2
+dneut = 1 / mesh:Theta^2
+diagnose = true
+
+[sound_speed]
+
+[electron_force_balance]
+
+[braginskii_collisions]
+
+[braginskii_friction]
+
+[braginskii_heat_exchange]
+
+[braginskii_conduction]
+
+####################################
+
+[d+]  # Deuterium ions
+type = evolve_density, evolve_momentum, evolve_pressure
+
+charge = 1
+AA = 2
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+recycle_as = d
+target_recycle = true
+target_recycle_multiplier = 0.9   # Recycling fraction R; 1 - R is pumped
+target_recycle_energy = 3         # Energy of recycled atoms [eV]
+
+[Nd+]
+function = 1
+
+flux = 2e23   # Core particle flux, per m^2 per second (both targets)
+source = flux / mesh:source_length * mesh:in_source   # [m^-3 s^-1]
+
+[Pd+]
+function = 1
+
+powerflux = 6e7   # Ion power input [W/m^2] (both targets)
+source = (2/3) * powerflux / mesh:source_length * mesh:in_source   # [Pa/s]
+
+[NVd+]
+function = 0
+
+####################################
+
+[d]  # Deuterium atoms
+type = evolve_density, evolve_momentum, evolve_pressure, noflow_boundary
+
+charge = 0
+AA = 2
+
+thermal_conduction = true
+diagnose = true
+
+[Nd]
+function = 0.001
+
+[Pd]
+function = 0.0001
+
+[NVd]
+function = 0
+
+####################################
+
+[e]  # Electrons
+type = quasineutral, evolve_pressure, zero_current
+
+charge = -1
+AA = 1/1836
+
+thermal_conduction = true  # in evolve_pressure
+diagnose = true
+
+[Pe]
+function = `Pd+:function`
+
+powerflux = 6e7   # Electron power input [W/m^2] (both targets)
+source = (2/3) * powerflux / mesh:source_length * mesh:in_source   # [Pa/s]

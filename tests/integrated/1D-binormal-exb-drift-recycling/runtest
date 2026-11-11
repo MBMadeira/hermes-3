@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+
+# Binormal ExB drift in a 1D island divertor SOL with neutrals and recycling
+# at both targets (binormal_exb_drift, exb_drift option of
+# sheath_boundary_simple and recycling, reactions, neutral_parallel_diffusion).
+#
+# Fixed core particle and power sources; a fraction 1 - R of the target flux is
+# pumped. Checks that, in steady state,
+#   - the total velocity v_par + v_E/Theta is sonic at both targets
+#   - particles are conserved:
+#       flux into the targets = core source + ionisation - recombination
+#       recycled flux = R * flux into the targets, where the flux into the
+#       targets includes the drift, n (v_par + v_E/Theta)
+#       core source = (1 - R) * flux into the targets
+#   - energy is conserved: sheath losses + radiation and ionisation losses +
+#     kinetic energy given to core source particles = power input + ExB work
+#     + energy of the recycled atoms
+#   - the drift makes the targets asymmetric, more strongly than without
+#     neutrals (Kriete's isothermal ratio)
+#   - reversing the drift mirrors the solution
+#   - the right-hand side is the same on 1 and 2 processors
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from boutdata import restart
+from boutdata.collect import collect
+from boututils.run_wrapper import launch_safe
+
+vE = 66.0  # [m/s]
+R = 0.9  # Recycling fraction (d+:target_recycle_multiplier in data/BOUT.inp)
+
+QE = 1.602176634e-19
+MP = 1.67262192595e-27
+AA = 2.0
+
+bohm_tolerance = 0.1
+particle_tolerance = 1e-3
+# The energy balance residual is a discretisation error at the steep target
+# gradients, which decreases with resolution: < 0.1% here, up to ~6% in
+# near-symmetric cases at higher recycling
+energy_tolerance = 0.02
+steady_tolerance = 1e-4
+symmetry_tolerance = 1e-4
+mpi_tolerance = 1e-10
+
+hermes_candidates = [Path("../../../hermes-3"), Path("../../../build/hermes-3")]
+hermes_exec = next((path for path in hermes_candidates if path.exists()), None)
+if hermes_exec is None:
+    raise FileNotFoundError("Could not find hermes-3 executable in repo root or build/")
+
+run_root = Path("runs")
+input_file = Path("data/BOUT.inp")
+
+
+def prepare(name, text=None):
+    case_dir = run_root / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    (case_dir / "BOUT.inp").write_text(text or input_file.read_text())
+    return case_dir
+
+
+def launch(case_dir, args, nproc=1):
+    print(f"Running {case_dir}: {args} on {nproc} processor(s)")
+    status, out = launch_safe(
+        f"{hermes_exec} -d {case_dir} {args}", nproc=nproc, pipe=True
+    )
+    (case_dir / "run.log").write_text(out)
+    if status != 0:
+        raise RuntimeError(f"Hermes run failed for {case_dir}")
+
+
+def get(case_dir, var):
+    """Variable in SI units (applies the conversion attribute)"""
+    data = collect(var, path=str(case_dir), info=False)
+    conversion = float(data.attributes.get("conversion", 1.0))
+    return np.asarray(data).squeeze() * conversion
+
+
+def run_case(name, v):
+    case_dir = prepare(name)
+    launch(case_dir, f"drift:vE={v}")
+
+    d = {"dir": case_dir}
+    for key in ["Nd+", "Pd+", "Pe", "Nd", "Pd", "Td+", "Te", "Vd+"]:
+        values = get(case_dir, key)
+        d[key] = values[-1]
+        d[key + "_prev"] = values[-2]
+    for key in [
+        "Sd+_src",
+        "Pd+_src",
+        "Pe_src",
+        "Sd+_sheath",
+        "Ed+_sheath",
+        "Ee_sheath",
+        "Sd+_iz",
+        "Sd+_rec",
+        "Sd_target_recycle",
+        "Ed_target_recycle",
+        "Rd+_ex",
+        "Rd+_rec",
+    ]:
+        values = get(case_dir, key)
+        d[key] = values[-1] if values.ndim > 1 else values  # May be time-dependent
+    d["w"] = get(case_dir, "w_binormal_exb_drift")
+    rho_s0 = float(collect("rho_s0", path=str(case_dir), info=False))
+    dy = np.asarray(collect("dy", path=str(case_dir), info=False)).squeeze()
+    g_22 = np.asarray(collect("g_22", path=str(case_dir), info=False)).squeeze()
+    d["ds"] = dy * np.sqrt(g_22) * rho_s0  # Parallel cell length [m] (J = 1)
+    return d
+
+
+failures = []
+
+
+def check(name, value, ok):
+    print(f"    {name}: {value} -> {'Passed' if ok else 'Failed'}")
+    if not ok:
+        failures.append(name)
+
+
+def check_steady_state(d, label):
+    print(f"  {label}")
+    N, Ti, Te, V, W, ds = d["Nd+"], d["Td+"], d["Te"], d["Vd+"], d["w"], d["ds"]
+    mi = AA * MP
+    cs = np.sqrt((Ti + Te) * QE / mi)
+
+    change = max(
+        np.max(np.abs(d[k] - d[k + "_prev"]) / np.abs(d[k]))
+        for k in ["Nd+", "Pd+", "Pe", "Nd", "Pd"]
+    )
+    check("steady state", f"{change:.1e}", change < steady_tolerance)
+
+    u_lower = (V[0] + W[0]) / cs[0]
+    u_upper = (V[-1] + W[-1]) / cs[-1]
+    check(
+        "Bohm condition on v_par + v_E/Theta",
+        f"lower {u_lower:.3f}, upper {u_upper:.3f}",
+        abs(u_lower + 1) < bohm_tolerance and abs(u_upper - 1) < bohm_tolerance,
+    )
+
+    # Particle fluxes per unit area. The sheath diagnostic is a sink in the
+    # cells next to the targets; its sign differs between the two targets.
+    flux_lower = abs(d["Sd+_sheath"][0]) * ds[0]
+    flux_upper = abs(d["Sd+_sheath"][-1]) * ds[-1]
+    flux = flux_lower + flux_upper
+    core = np.sum(d["Sd+_src"] * ds)
+    ionisation = np.sum(d["Sd+_iz"] * ds)
+    recombination = -np.sum(d["Sd+_rec"] * ds)
+    recycled = np.sum(d["Sd_target_recycle"] * ds)
+    for name, ratio in [
+        (
+            "target flux / (core + ionisation - recombination)",
+            flux / (core + ionisation - recombination),
+        ),
+        ("recycled / (R * target flux)", recycled / (R * flux)),
+        ("(1 - R) * target flux / core source", (1 - R) * flux / core),
+    ]:
+        check(name, f"{ratio:.5f}", abs(ratio - 1) < particle_tolerance)
+
+    # Energy balance per unit area
+    power_in = np.sum(1.5 * (d["Pd+_src"] + d["Pe_src"]) * ds)
+    sheath = -np.sum((d["Ed+_sheath"] + d["Ee_sheath"]) * ds)
+    radiation = -np.sum((d["Rd+_ex"] + d["Rd+_rec"]) * ds)
+    recycle_energy = np.sum(d["Ed_target_recycle"] * ds)
+    p_total = N * (Te + Ti) * QE
+    work_exb = np.mean(W) * (p_total[-1] - p_total[0])
+    dilution = np.sum(0.5 * mi * V**2 * d["Sd+_src"] * ds)
+    balance = (sheath + radiation + dilution) / (power_in + work_exb + recycle_energy)
+    check(
+        "energy balance",
+        f"{balance:.4f} (sheaths {sheath / power_in:.3f}, radiation "
+        f"{radiation / power_in:.3f}, ExB work {work_exb / power_in:+.3f} of input)",
+        abs(balance - 1) < energy_tolerance,
+    )
+
+    mid = N.size // 2
+    gamma = np.mean(W) / (2 * cs[mid])
+    return {
+        "gamma": gamma,
+        "density_ratio": N[-1] / N[0],
+        "flux_ratio": flux_upper / flux_lower,
+    }
+
+
+d = run_case("vE_plus", vE)
+res = check_steady_state(d, f"vE = {vE}")
+ratio_kriete = (1 + res["gamma"]) / (1 - res["gamma"])
+check(
+    "drift towards the upper target makes it denser, more than without neutrals",
+    f"n_upper / n_lower {res['density_ratio']:.3f}, flux ratio "
+    f"{res['flux_ratio']:.3f} (Kriete isothermal {ratio_kriete:.3f}, "
+    f"gamma {res['gamma']:.3f})",
+    res["density_ratio"] > ratio_kriete and res["flux_ratio"] > ratio_kriete,
+)
+
+d_m = run_case("vE_minus", -vE)
+check_steady_state(d_m, f"vE = {-vE}")
+errors = [
+    np.max(np.abs(d_m[k][::-1] - d[k])) / np.max(np.abs(d[k]))
+    for k in ["Nd+", "Te", "Td+", "Nd"]
+]
+check(
+    "mirror symmetry vE -> -vE",
+    ", ".join(f"{e:.1e}" for e in errors),
+    max(errors) < symmetry_tolerance,
+)
+
+# Right-hand side at the steady state on 1 and 2 processors: restart from the
+# vE_plus state and take a negligible time step (1e-4, above the roundoff of
+# the restart time), so that the time derivatives
+# in the output are the right-hand side at that state.
+rhs = {}
+for nproc in [1, 2]:
+    case_dir = prepare(f"rhs_np{nproc}")
+    restart.redistribute(nproc, path=str(d["dir"]), output=str(case_dir), myg=2)
+    launch(case_dir, f"restart drift:vE={vE} nout=1 timestep=1e-4", nproc)
+    rhs[nproc] = {
+        k: np.asarray(collect(f"ddt({k})", path=str(case_dir), info=False))[-1].ravel()
+        for k in ["Nd+", "Pd+", "Pe", "NVd+", "Nd", "Pd", "NVd"]
+    }
+# Compare with the size of the terms: the scale of each time derivative at
+# the start of the vE_plus run (far from steady state)
+first = prepare("rhs_scale")
+launch(first, f"drift:vE={vE} nout=1 timestep=1e-4")
+worst = 0.0
+for k, a in rhs[1].items():
+    scale = np.max(
+        np.abs(np.asarray(collect(f"ddt({k})", path=str(first), info=False))[-1])
+    )
+    worst = max(worst, np.max(np.abs(rhs[2][k] - a)) / scale)
+check("right-hand side on 1 vs 2 processors", f"{worst:.1e}", worst < mpi_tolerance)
+
+if failures:
+    print(f"\n => Failed: {', '.join(failures)}")
+    sys.exit(1)
+
+print("\n => All passed")
+sys.exit(0)

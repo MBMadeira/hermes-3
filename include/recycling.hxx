@@ -2,6 +2,7 @@
 #ifndef RECYCLING_H
 #define RECYCLING_H
 
+#include "binormal_exb_drift.hxx"
 #include "component.hxx"
 
 /// Convert fluxes of species at boundaries
@@ -19,6 +20,14 @@ struct Recycling : public NamedComponent<Recycling> {
   ///     - recycle_as  The species to recycle into
   ///     - recycle_multiplier   The recycled flux multiplier, between 0 and 1
   ///     - recycle_energy       The energy of the recycled particles [eV]
+  ///
+  ///   - <name>
+  ///     - exb_drift  Name of a binormal_exb_drift component section. If set, the
+  ///                  target particle flux that is recycled is n (v_par + v_E/Theta),
+  ///                  the total flux into the target including the binormal ExB drift,
+  ///                  and fast recycling uses gamma_i T n (v_par + v_E/Theta).
+  ///                  The sheath should use the same drift (sheath_boundary_simple:
+  ///                  exb_drift or sheath_boundary:exb_drift).
   ///
   Recycling(std::string name, Options& alloptions, Solver*);
 
@@ -71,6 +80,12 @@ private:
       pressure_floor; ///< minimum values for Nn, Pn to avoid divide by zero
 
   BoutReal gamma_i; /// Sheath heat transmission coefficient
+
+  /// Binormal ExB drift (see binormal_exb_drift.hxx). The drift's effective parallel
+  /// velocity W = v_E/Theta is added to the ion parallel velocity in the target
+  /// flux. Zero if no drift.
+  bool use_exb_drift{false};
+  BinormalExBSettings exb;
 
   Field3D density_source,
       energy_source;          ///< Recycling particle and energy sources for all locations

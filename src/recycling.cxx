@@ -40,6 +40,18 @@ Recycling::Recycling(std::string name, Options& alloptions, Solver*)
   // the advection component is in the finally() of evolve_pressure, so we must
   // recalculate it. This is only possible for sheath_boundary_simple where
   // gamma is known.
+  const std::string exb_drift_name =
+      options["exb_drift"]
+          .doc("Name of a binormal_exb_drift component. If set, the recycled target "
+               "flux is n (v_par + v_E/Theta)")
+          .withDefault<std::string>("");
+  use_exb_drift = !exb_drift_name.empty();
+  if (use_exb_drift) {
+    exb = readBinormalExBSettings(alloptions[exb_drift_name], units);
+  } else {
+    exb.W = Field3D(0.0);
+  }
+
   if (alloptions.isSection("sheath_boundary_simple")) {
     has_sheath_boundary_simple = true;
     if (alloptions["sheath_boundary_simple"]["gamma_i"].isSet()) {
@@ -253,7 +265,9 @@ void Recycling::transform_impl(GuardedOptions& state) {
           auto is = i.yp();                              // Second to last domain cell
 
           // Reproduce sheath advected particle flux from evolve_density
-          BoutReal flux = -0.5 * (N[i] + N[ig]) * 0.5 * (V[i] + V[ig]);
+          // plus, if set, the flux due to the binormal ExB drift
+          const BoutReal usheath = 0.5 * (V[i] + V[ig]) + 0.5 * (exb.W[i] + exb.W[ig]);
+          BoutReal flux = -0.5 * (N[i] + N[ig]) * usheath;
           flux = std::max(flux, 0.0);
 
           BoutReal daparsheath = (J[i] + J[ig]) / (sqrt(g_22[i]) + sqrt(g_22[ig])) * 0.5
@@ -272,9 +286,10 @@ void Recycling::transform_impl(GuardedOptions& state) {
           // Reproduce sheath advected energy flux from evolve_pressure
           BoutReal nisheath = (N[i] + N[ig]) * 0.5;
           BoutReal tisheath = (T[i] + T[ig]) * 0.5;
-          BoutReal visheath = (V[i] + V[ig]) * 0.5;
+          // Total ion energy flow into the target, gamma_i T n u with
+          // u = v_par + v_E/Theta
           BoutReal sheath_ion_heat_flow =
-              std::abs(gamma_i * nisheath * tisheath * visheath * daparsheath / volume);
+              std::abs(gamma_i * nisheath * tisheath * usheath * daparsheath / volume);
 
           // Blend fast (ion energy) and thermal (constant energy) recycling
           // Calculate returning neutral heat flow in [W]
@@ -346,7 +361,9 @@ void Recycling::transform_impl(GuardedOptions& state) {
           auto is = i.ym();                            // Second to last domain cell
 
           // Reproduce sheath advected particle flux from evolve_density
-          BoutReal flux = 0.5 * (N[i] + N[ig]) * 0.5 * (V[i] + V[ig]);
+          // plus, if set, the flux due to the binormal ExB drift
+          const BoutReal usheath = 0.5 * (V[i] + V[ig]) + 0.5 * (exb.W[i] + exb.W[ig]);
+          BoutReal flux = 0.5 * (N[i] + N[ig]) * usheath;
           flux = std::max(flux, 0.0);
 
           BoutReal daparsheath = (J[i] + J[ig]) / (sqrt(g_22[i]) + sqrt(g_22[ig])) * 0.5
@@ -366,9 +383,10 @@ void Recycling::transform_impl(GuardedOptions& state) {
           // Reproduce sheath advected energy flux from evolve_pressure
           BoutReal nisheath = (N[i] + N[ig]) * 0.5;
           BoutReal tisheath = (T[i] + T[ig]) * 0.5;
-          BoutReal visheath = (V[i] + V[ig]) * 0.5;
+          // Total ion energy flow into the target, gamma_i T n u with
+          // u = v_par + v_E/Theta
           BoutReal sheath_ion_heat_flow =
-              std::abs(gamma_i * nisheath * tisheath * visheath * daparsheath / volume);
+              std::abs(gamma_i * nisheath * tisheath * usheath * daparsheath / volume);
 
           // Blend fast (ion energy) and thermal (constant energy) recycling
           // Calculate returning neutral heat flow in [W]

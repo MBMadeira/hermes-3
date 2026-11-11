@@ -1445,6 +1445,31 @@ particle and energy balance. In the energy balance, the work term
 internal energy, and the kinetic energy given to source particles (injected at
 rest) is a loss that Hermes-3 does not return to heat.
 
+Neutrals and recycling use the existing components: ``recycling`` (with its
+``exb_drift`` option, so that the recycled flux is the total flux into the
+target, :math:`n\left(v_{||} + w\right)`), ``reactions`` and
+``neutral_parallel_diffusion``. The binormal drift does not act on neutral
+species. Cross-field neutral transport in the island poloidal direction is
+projected onto the field line coordinate with ``dneut`` :math:`= 1/\Theta^2`,
+the analogue of :math:`(B/B_{pol})^2` in a tokamak:
+
+.. code-block:: ini
+
+   [neutral_parallel_diffusion]
+   dneut = 1 / mesh:Theta^2
+
+   [recycling]
+   species = d+
+   exb_drift = binormal_exb_drift
+
+This makes the neutral equations very stiff (the effective diffusion
+coefficient along :math:`s` is :math:`\sim 10^9\,\mathrm{m^2/s}`). With CVODE,
+the band-block-diagonal preconditioner (``solver:cvode_precon_method = bbd``)
+handles this on a single processor; it is much less effective in parallel. The
+example ``examples/stellarator-1D/kriete-exb-drift-recycling`` and the test
+``tests/integrated/1D-binormal-exb-drift-recycling`` check the particle and
+energy balance with recycling.
+
 With ``diagnose = true`` the effective velocity ``w_binormal_exb_drift``, the
 particle source ``S<species>_exb``, the particle flow ``F<species>_exb_ylow``,
 the energy source ``E<species>_exb`` and the enthalpy flow
