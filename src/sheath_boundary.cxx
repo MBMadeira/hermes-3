@@ -868,9 +868,10 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
           NVi[im] = 2. * Mi * nisheath * visheath - NVi[i];
 
           // Kinetic energy per ion at the sheath entrance: 1/2 m C_i^2 as in
-          // gamma_i, corrected for the parallel velocity v_par = u - w when there
-          // is a binormal drift (equal to 1/2 m v_par^2 when u = C_i)
-          const BoutReal kinetic = 0.5 * Mi * (C_i_sq + SQ(visheath) - SQ(usheath));
+          // gamma_i or, with a binormal drift, 1/2 m v_par^2 with the parallel
+          // velocity v_par = u - w
+          const BoutReal kinetic =
+              use_exb_drift ? 0.5 * Mi * SQ(visheath) : 0.5 * Mi * C_i_sq;
 
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath
@@ -992,9 +993,10 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
           NVi[ip] = 2. * Mi * nisheath * visheath - NVi[i];
 
           // Kinetic energy per ion at the sheath entrance: 1/2 m C_i^2 as in
-          // gamma_i, corrected for the parallel velocity v_par = u - w when there
-          // is a binormal drift (equal to 1/2 m v_par^2 when u = C_i)
-          const BoutReal kinetic = 0.5 * Mi * (C_i_sq + SQ(visheath) - SQ(usheath));
+          // gamma_i or, with a binormal drift, 1/2 m v_par^2 with the parallel
+          // velocity v_par = u - w
+          const BoutReal kinetic =
+              use_exb_drift ? 0.5 * Mi * SQ(visheath) : 0.5 * Mi * C_i_sq;
 
           // Take into account the flow of energy due to fluid flow
           // This is additional energy flux through the sheath

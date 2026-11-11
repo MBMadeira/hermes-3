@@ -38,13 +38,16 @@ through the sheaths and as the kinetic energy given to source particles
 | v_E = 0 | 1.000 | 1.000 | −0.978, +0.978 | 1.006 |
 | v_E = 66 m/s (γ ≈ 0.23) | 1.616 | 1.612 | −0.965, +0.989 | 1.008 |
 | v_E = −66 m/s | 0.619 | 0.620 | −0.989, +0.965 | 1.008 |
-| v_E = 132 m/s (γ ≈ 0.46) | 2.697 | 2.722 | −0.949, +1.033 | 1.013 |
+| v_E = 132 m/s (γ ≈ 0.46) | 2.554 | 2.724 | −0.948, +1.144 | 1.013 |
 | v_E = 66 m/s, κ × 30 (T flat to 2 eV) | 1.696 | 1.699 | −0.960, +0.978 | 1.010 |
 
 γ = v_E / (2 c_s Θ) with c_s at the mid-point. Particle balance closes to
 better than 10⁻³ in all cases. Because conduction keeps the temperature nearly
 uniform here, the target density asymmetry follows Kriete's isothermal result
-(1+γ)/(1−γ); it approaches it further as the conductivity is increased.
+(1+γ)/(1−γ); it approaches it further as the conductivity is increased. The
+exception is v_E = 132 m/s: there w = v_E/Θ = 132 km/s exceeds c_s ≈ 127 km/s at
+the upper target, so the drift alone carries the plasma into that target
+supersonically (u = 1.14 c_s), and the ratio is 6% below Kriete's.
 
 Other checks: v_E → −v_E mirrors the solution (2.8×10⁻⁵); 1 and 2 processors
 agree (1.5×10⁻⁴); ny = 400 gives n_upper/n_lower = 1.629. The case with
@@ -53,8 +56,11 @@ before `electron_force_balance`, which uses the electron momentum source) also
 reaches a steady state.
 
 In Kriete's geometry with source-free legs (`y_xpoint = 0.4`) the solution is
-steady with pressure evolved; the legs become supersonic (u ≈ −1.14, +1.20 c_s)
-as the temperature drops towards the targets.
+steady with pressure evolved; the legs become supersonic (u ≈ −1.43, +1.58 c_s)
+as the temperature drops towards the targets. When u > c_s the ion heat flux
+uses the actual parallel kinetic energy ½ m v∥² in place of the ½ m c_s²
+assumed in γ_i (an earlier version subtracted ½ m u², which is only correct
+at u = c_s, and gave u ≈ −1.14, +1.20 c_s here).
 
 The energy balance error (≲ 1.5%) is of the same size as without the drift
 and comes mainly from approximating the face pressures in the E×B work by the
@@ -75,9 +81,10 @@ that component, C_i² = (5/3 T_i + T_e)/m_i.
 | v_E = 0 | 1.000 | 1.000 | −0.969, +0.969 | 1.012 |
 | v_E = 66 m/s (γ ≈ 0.24) | 1.607 | 1.617 | −0.954, +0.982 | 1.014 |
 | v_E = −66 m/s | 0.623 | 0.618 | −0.982, +0.954 | 1.014 |
-| v_E = 132 m/s (γ ≈ 0.47) | 2.705 | 2.749 | −0.935, +1.028 | 1.018 |
+| v_E = 132 m/s (γ ≈ 0.46) | 2.747 | 2.733 | −0.935, +1.018 | 1.018 |
 
-Particle balance closes to 3×10⁻⁴; v_E → −v_E mirrors the solution (3×10⁻⁴)
+Particle balance closes to 3×10⁻⁴ (1% at v_E = 132 m/s, which is not fully
+steady at 50 outputs); v_E → −v_E mirrors the solution (3×10⁻⁴)
 and 1 and 2 processors agree (7×10⁻⁵). The energy balance is ~1% higher than
 with the simple sheath already without drift: the total sheath loss diagnosed by
 `sheath_boundary` approximates the advected part with sheath-entrance values.

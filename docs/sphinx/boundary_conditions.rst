@@ -219,9 +219,12 @@ condition is then imposed on the total velocity normal to the target,
 and the heat fluxes use this total flux, and the parallel velocities of ions and electrons at the
 sheath entrance are set to :math:`v_{||} = u - v_E/\Theta` (so that :math:`J_{||} = 0`).
 The ion heat transmission coefficient assumes that ions arrive with kinetic energy
-:math:`\frac{1}{2}m u^2`; with the drift their parallel velocity differs from :math:`u`, so the total
-ion energy flux is :math:`\left[\gamma_i T_i + \frac{1}{2}m_i\left(v_{||}^2 - u^2\right)\right] n u`
-(unchanged without drift). The energy carried through the target by the drift component
+:math:`\frac{1}{2}m_i c_s^2`; with the drift their kinetic energy is
+:math:`\frac{1}{2}m_i v_{||}^2`, so the total ion energy flux is
+:math:`\left[\gamma_i T_i + \frac{1}{2}m_i\left(v_{||}^2 - c_s^2\right)\right] n u`
+(unchanged without drift). When :math:`|v_E/\Theta| > c_s` at a cold target the drift alone carries
+the plasma into the target supersonically: :math:`|u| > c_s` with :math:`v_{||} \approx 0`, and the
+Bohm condition no longer constrains :math:`v_{||}` there. The energy carried through the target by the drift component
 (:math:`\frac{5}{2} p w` and :math:`\frac{1}{2} m n v_{||}^2 w`) is subtracted from the sheath sink:
 
 .. code-block:: ini
@@ -307,10 +310,10 @@ component applies the Bohm condition to the total velocity normal to the target,
 and electron parallel velocities at the sheath entrance to :math:`v_{||} = u - v_E/\Theta`. The
 sheath potential and the ion-induced secondary emission use the total ion flux :math:`n_i u` and
 the actual ion kinetic energy :math:`\frac{1}{2}m_i v_{||}^2`. The energy carried through the target
-by the drift component is subtracted from the sheath heat fluxes, and the ion kinetic energy assumed in
-:math:`\gamma_i` is corrected for the parallel velocity, so that the total energy loss of each species is
-unchanged by the way it is split between advection and the sheath sink. Without the drift the boundary
-conditions are unchanged.
+by the drift component is subtracted from the sheath heat fluxes, and the ion kinetic energy
+:math:`\frac{1}{2}m_i C_i^2` assumed in :math:`\gamma_i` is replaced by :math:`\frac{1}{2}m_i v_{||}^2`,
+so that the total energy loss of each species is unchanged by the way it is split between advection
+and the sheath sink. Without the drift the boundary conditions are unchanged.
 
 .. code-block:: ini
 

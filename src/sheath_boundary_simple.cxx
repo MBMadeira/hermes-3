@@ -634,12 +634,13 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
           // Negative -> into sheath. Allow supersonic flow.
           BoutReal usheath = std::min(Vi[i] + wsheath, -sqrt(C_i_sq));
 
-          // Note: Here this is negative because usheath < 0
           // With a binormal drift the parallel velocity is usheath - wsheath, and
-          // the kinetic energy differs from the 1/2 m u^2 assumed in gamma_i
-          BoutReal q =
-              (gamma_i * tisheath + 0.5 * Mi * (SQ(usheath - wsheath) - SQ(usheath)))
-              * nisheath * usheath;
+          // the kinetic energy per ion is 1/2 m (u - w)^2 rather than the
+          // 1/2 m C_i^2 assumed in gamma_i (zero correction without drift)
+          const BoutReal kinetic_correction =
+              use_exb_drift ? 0.5 * Mi * (SQ(usheath - wsheath) - C_i_sq) : 0.0;
+          // Note: Here this is negative because usheath < 0
+          BoutReal q = (gamma_i * tisheath + kinetic_correction) * nisheath * usheath;
 
           if (no_flow) {
             usheath = 0.0;
@@ -675,9 +676,8 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
               nisheath * usheath * da / dv; // [m^-3s^-1] Diagnostics only
 
           // Total heat flux for diagnostic purposes
-          q = (gamma_i * tisheath + 0.5 * Mi * (SQ(visheath) - SQ(usheath))) * nisheath
-              * usheath;             // [Wm^-2]
-          hflux_i[i] += q * da / dv; // [Wm^-3]
+          q = (gamma_i * tisheath + kinetic_correction) * nisheath * usheath; // [Wm^-2]
+          hflux_i[i] += q * da / dv;                                          // [Wm^-3]
           ion_sheath_power_ylow[i] +=
               heatflow; // [W] lower Y, so power placed in final domain cell
         }
@@ -719,10 +719,11 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
           BoutReal usheath = std::max(Vi[i] + wsheath, sqrt(C_i_sq));
 
           // With a binormal drift the parallel velocity is usheath - wsheath, and
-          // the kinetic energy differs from the 1/2 m u^2 assumed in gamma_i
-          BoutReal q =
-              (gamma_i * tisheath + 0.5 * Mi * (SQ(usheath - wsheath) - SQ(usheath)))
-              * nisheath * usheath;
+          // the kinetic energy per ion is 1/2 m (u - w)^2 rather than the
+          // 1/2 m C_i^2 assumed in gamma_i (zero correction without drift)
+          const BoutReal kinetic_correction =
+              use_exb_drift ? 0.5 * Mi * (SQ(usheath - wsheath) - C_i_sq) : 0.0;
+          BoutReal q = (gamma_i * tisheath + kinetic_correction) * nisheath * usheath;
 
           if (no_flow) {
             usheath = 0.0;
@@ -758,9 +759,8 @@ void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
               nisheath * usheath * da / dv; // [m^-3s^-1] Diagnostics only
 
           // Total heat flux for diagnostic purposes
-          q = (gamma_i * tisheath + 0.5 * Mi * (SQ(visheath) - SQ(usheath))) * nisheath
-              * usheath;             // [Wm^-2]
-          hflux_i[i] -= q * da / dv; // [Wm^-3]
+          q = (gamma_i * tisheath + kinetic_correction) * nisheath * usheath; // [Wm^-2]
+          hflux_i[i] -= q * da / dv;                                          // [Wm^-3]
           ion_sheath_power_ylow[ip] +=
               heatflow; // [W]  Upper Y, so sheath boundary power on ylow side of inner guard cell
         }
