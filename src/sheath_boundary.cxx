@@ -317,8 +317,9 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
             // Total velocity normal to the target, v_par + w
             // (w = 0 without binormal drift). Enable supersonic flow.
-            const BoutReal usheath =
-                std::min(-sqrt(C_i_sq), Vi[i] + exb.W[i]); // Negative into lower sheath
+            const BoutReal usheath = std::min(
+                -sqrt(C_i_sq),
+                Vi[i] + 0.5 * (exb.W[i] + exb.W[i.ym()])); // Negative into lower sheath
 
             // Note: Vzi = |usheath| * sin(α)
             ion_sum[i] += s_i * Zi * sin_alpha[ip] * (-usheath);
@@ -359,8 +360,9 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
             // Total velocity normal to the target, v_par + w
             // (w = 0 without binormal drift). Enable supersonic flow.
-            const BoutReal usheath =
-                std::max(sqrt(C_i_sq), Vi[i] + exb.W[i]); // Positive into upper sheath
+            const BoutReal usheath = std::max(
+                sqrt(C_i_sq),
+                Vi[i] + 0.5 * (exb.W[i] + exb.W[i.yp()])); // Positive into upper sheath
 
             ion_sum[i] += s_i * Zi * sin_alpha[im] * usheath;
           }
@@ -423,9 +425,10 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
                   // Negative velocity is outward through the lower-Y sheath.
                   // Total normal velocity u = v_par + w, parallel v_par = u - w
+                  const BoutReal wsheath = 0.5 * (exb.W[i] + exb.W[i.ym()]);
                   const BoutReal usheath =
-                      std::min(-sqrt(C_i_sq), ion.velocity[i] + exb.W[i]);
-                  const BoutReal visheath = usheath - exb.W[i];
+                      std::min(-sqrt(C_i_sq), ion.velocity[i] + wsheath);
+                  const BoutReal visheath = usheath - wsheath;
 
                   // Positive magnitude of the outgoing ion particle flux divided by ne
                   const BoutReal ion_flux_over_ne = -s_i * sin_alpha[ip] * usheath;
@@ -518,9 +521,10 @@ void SheathBoundary::transform_impl(GuardedOptions& state) {
 
                   // Positive velocity is outward through the upper-Y sheath.
                   // Total normal velocity u = v_par + w, parallel v_par = u - w
+                  const BoutReal wsheath = 0.5 * (exb.W[i] + exb.W[i.yp()]);
                   const BoutReal usheath =
-                      std::max(sqrt(C_i_sq), ion.velocity[i] + exb.W[i]);
-                  const BoutReal visheath = usheath - exb.W[i];
+                      std::max(sqrt(C_i_sq), ion.velocity[i] + wsheath);
+                  const BoutReal visheath = usheath - wsheath;
 
                   // Positive magnitude of the outgoing ion particle flux divided by ne
                   const BoutReal ion_flux_over_ne = s_i * sin_alpha[im] * usheath;

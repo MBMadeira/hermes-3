@@ -1420,13 +1420,17 @@ problem ill-posed: one target becomes subsonic and the other supersonic.
    [sheath_boundary_simple]   # or [sheath_boundary]
    exb_drift = binormal_exb_drift   # Bohm condition on v_par + vE/Theta
 
-Both ``vE`` and ``Theta`` may be functions of position. The operators are
-written in terms of ``Div_par``, so the component works on a grid in parallel
-length (:math:`g_{22} = 1`, constant :math:`\Theta`) and on a grid in island
+The operators are written in terms of ``Div_par``, so the component works on
+a grid in parallel length (:math:`g_{22} = 1`) and on a grid in island
 poloidal length with :math:`g^{22} = \Theta^2`, where
-:math:`\nabla\cdot(\mathbf{b}\, n w) = \partial_{s_\theta}(n v_E)` for any
-:math:`\Theta(s_\theta)`. The two give the same result for constant
-:math:`\Theta`.
+:math:`\nabla\cdot(\mathbf{b}\, n w) = \partial_{s_\theta}(n v_E)`; the two
+give the same result for constant :math:`\Theta`. A :math:`\Theta` varying
+along the field line is only treated correctly on the island poloidal grid
+(with the same :math:`\Theta` in ``g22`` and in this component), because the
+pitch then acts like a flux-tube area. ``vE`` should be constant: a
+:math:`v_E` varying along :math:`y` makes the drift compressible in 1D, since
+the compensating radial divergence of the incompressible E×B flow is not
+included.
 
 The example ``examples/stellarator-1D/kriete-exb-drift`` (isothermal)
 reproduces Kriete's analytic solution (target density asymmetry

@@ -101,7 +101,9 @@ def analyse(r, bohm_adiabatic=1.0):
     res["Ti_lower"] = r["Ti"][0]
     res["Ti_upper"] = r["Ti"][-1]
 
-    # Particle balance: source vs. target outflow n |u| (sheath diagnostic)
+    # Particle balance: source vs. target outflow n |u| (sheath diagnostic).
+    # Note: without the exb_drift option in the sheath component the sheath
+    # diagnostic only counts n v_par, not the drift flux through the target.
     particles_in = np.sum(r["Sn"] * r["dV"])
     particles_out = np.sum(np.abs(r["Ssheath"]) * r["dV"])
     res["particle_balance"] = particles_out / particles_in

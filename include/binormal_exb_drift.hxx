@@ -51,8 +51,14 @@ struct BinormalExBSettings {
 ///
 /// Reads:
 ///   - vE                  Binormal ExB velocity [m/s]. Positive is towards
-///                         increasing y (the upper target). May depend on y.
-///   - Theta               Field line pitch inside the island. May depend on y.
+///                         increasing y (the upper target). Should be constant:
+///                         a vE varying along y makes the drift compressible in
+///                         1D (the compensating radial ExB divergence of the
+///                         incompressible 2D drift is not included).
+///   - Theta               Field line pitch inside the island. May depend on y
+///                         only on an island-poloidal grid (g^22 = Theta^2 with
+///                         the same Theta); on a parallel-length grid
+///                         (g_22 = 1) it must be constant.
 ///   - momentum_advection  Advect parallel momentum? Default true
 ///   - energy_advection    Advect internal energy? Default true
 ///
