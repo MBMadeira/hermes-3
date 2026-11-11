@@ -107,6 +107,34 @@ Other checks (R = 0.9, v_E = 66 m/s): v_E → −v_E mirrors the solution
 of 6.01 (11.00 and 6.05 at ny = 200); the right-hand side is identical on 1 and
 2 processors.
 
+### Other components with the drift
+
+Added one at a time to this case (R = 0.9, v_E = 66 m/s); each runs to a steady
+state, with particle balance to 10⁻⁵, energy balance to ~1–2% and the same
+right-hand side on 1 and 2 processors:
+
+| Added | Effect |
+| --- | --- |
+| `braginskii_ion_viscosity` | n_upper/n_lower 11.0 → 7.4: the lower target, with supersonic v∥, is hot and nearly collisionless (Ti 174 → 122 eV). Consider the flux limiter `eta_limit_alpha`. |
+| `braginskii_thermal_force` | None with deuterium only (the electron–ion force cancels at zero current); acts on impurities. Must be listed before `electron_force_balance`. |
+| `fixed_fraction_nitrogen` (2%) | Radiation 5% of the input; asymmetry 11 → 12. Mirror symmetric. |
+| Trace He⁺ (core source, no atoms) | He⁺ target fluxes 1.7:1 (D 4.6:1); He concentration higher at the hot target. Mirror symmetric. |
+| `neutral_boundary` on d | Negligible here: the atoms lose 5 kW/m² to the targets (input 120 MW/m²). |
+| `simple_pump` on d (R = 1) | Pumped atoms = core source. |
+| `binormal_stpm` (D = 1, χ = 3, ν = 1 m²/s) | Asymmetry 11 → 12.7. Note that it also applies D, χ, ν to the atoms. |
+| Density and temperature feedback at the mid-point | See `tests/integrated/1D-binormal-exb-drift-feedback`. |
+
+Not usable, independently of the drift (same at v_E = 0):
+
+- `braginskii_electron_viscosity`: NaN at the targets (guard cells of the
+  viscosity coefficient are not set). With that patched, its force is
+  10⁴–10⁵ times the Braginskii estimate and it does not conserve energy.
+- `snb_conduction`: computes the heat flux through the target faces as well,
+  on top of the sheath heat flux (energy balance 0.62). Its bug that rescaled
+  `dy` on every call is fixed.
+- Evolving impurity atoms (helium): CVODE stalls in the initial transient with
+  dneut = 1/Θ².
+
 ### Processor-boundary fix in `braginskii_conduction`
 
 The 1 vs 2 processor check found a bug in `braginskii_conduction`, unrelated to

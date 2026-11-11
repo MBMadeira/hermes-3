@@ -1470,6 +1470,16 @@ example ``examples/stellarator-1D/kriete-exb-drift-recycling`` and the test
 ``tests/integrated/1D-binormal-exb-drift-recycling`` check the particle and
 energy balance with recycling.
 
+The test ``tests/integrated/1D-binormal-exb-drift-feedback`` adds
+``braginskii_ion_viscosity``, ``braginskii_thermal_force``, fixed fraction
+radiation, trace helium ions, ``neutral_boundary``, ``simple_pump``, and
+``upstream_density_feedback`` and ``temperature_feedback`` measured around the
+mid-point between the targets (``density_upstream_weight``,
+``temperature_measurement_weight``; see :ref:`sec-feedback-control`).
+``detachment_controller`` can control the front at either target
+(``target``, ``upstream_position``). ``braginskii_thermal_force`` must be
+listed before ``electron_force_balance``.
+
 With ``diagnose = true`` the effective velocity ``w_binormal_exb_drift``, the
 particle source ``S<species>_exb``, the particle flow ``F<species>_exb_ylow``,
 the energy source ``E<species>_exb`` and the enthalpy flow

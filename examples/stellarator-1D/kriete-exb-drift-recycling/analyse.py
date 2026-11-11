@@ -102,6 +102,17 @@ def load(run_dir):
         r["Srecycle"] = prof(f"S{NEUTRAL}_target_recycle")
         r["Erecycle"] = prof(f"E{NEUTRAL}_target_recycle")
         r["Rad"] = prof(f"R{ION}_ex") + prof(f"R{ION}_rec")  # Negative (loss)
+        # Other radiation and reaction losses, if any: fixed fraction
+        # impurities, and electron energy losses of other reactions (e.g.
+        # impurity ionisation and recombination)
+        for name in ds.variables:
+            if name.startswith("Rfixed_fraction") or (
+                name.startswith("R")
+                and name.endswith(("_ex", "_rec"))
+                and name not in (f"R{ION}_ex", f"R{ION}_rec")
+                and "t" in ds.variables[name].dimensions
+            ):
+                r["Rad"] = r["Rad"] + prof(name)
     return r
 
 
