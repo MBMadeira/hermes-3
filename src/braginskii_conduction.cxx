@@ -291,15 +291,17 @@ void BraginskiiConduction::transform_impl(GuardedOptions& state) {
 
       // This results in a harmonic average of the heat fluxes
       kappa_par /= (1. + abs(q_SH / softFloor(q_fl, 1e-10)));
-
-      // Values of kappa on cell boundaries are needed for fluxes
-      mesh->communicate(kappa_par);
     }
+
+    // Values of kappa on cell boundaries are needed for fluxes, so the guard
+    // cells must be communicated: some collision frequencies (e.g. charge
+    // exchange and ionisation, from the reactions) are only calculated in the
+    // domain interior, so kappa_par is not valid in processor guard cells.
+    mesh->communicate(kappa_par);
 
     // Fci does not work with mesh->iterateBndryLowerY(), so set the boundaries differently
     if (P.isFci()) {
 
-      mesh->communicate(kappa_par);
       kappa_par.applyParallelBoundary("parallel_neumann_o1");
 
     } else {
