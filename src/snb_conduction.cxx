@@ -14,9 +14,10 @@ void SNBConduction::transform_impl(GuardedOptions& state) {
 
   // SNB non-local heat flux. Also returns the Spitzer-Harm value for comparison
   // Note: Te in eV, Ne in Nnorm
-  auto dy_orig = mesh->getCoordinates()->dy();
+  const auto dy_orig = mesh->getCoordinates()->dy();
   ASSERT2(not dy_orig.isFci());
-  dy_orig *= rho_s0; // Convert distances to m
+  // Convert distances to m for the SNB calculation
+  mesh->getCoordinates()->setDy(dy_orig * rho_s0);
 
   // Inputs in eV and m^-3
   Div_Q_SNB = snb.divHeatFlux(Te, Ne, &Div_Q_SH);
