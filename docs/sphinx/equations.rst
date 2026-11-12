@@ -1501,7 +1501,18 @@ the analogue of :math:`(B/B_{pol})^2` in a tokamak:
 This makes the neutral equations very stiff (the effective diffusion
 coefficient along :math:`s` is :math:`\sim 10^9\,\mathrm{m^2/s}`). With CVODE,
 the band-block-diagonal preconditioner (``solver:cvode_precon_method = bbd``)
-handles this on a single processor; it is much less effective in parallel. The
+handles this on a single processor up to moderate recycling; it is much less
+effective in parallel, and CVODE stalls once the atom density at the mid-point
+falls below :math:`\sim 10^{13}\,\mathrm{m^{-3}}` (high recycling with little
+drift). The Newton solver ``beuler`` (BOUT++ with PETSc) reaches those steady
+states, on one or several processors: ``equation_form = pseudo_transient``,
+``pc_type = lu`` (``bjacobi`` with ``sub_pc_type = lu`` in parallel), and, with
+``vE_mode = sheath``, ``matrix_free_operator = true`` with ``ksp_type = gmres``,
+because :math:`v_E` then couples every cell to the cells next to the targets.
+Its ``atol`` must be well below the size of the right-hand side (e.g.
+``1e-11``), or it stops short of the steady state. The test
+``tests/integrated/1D-binormal-exb-drift-newton`` (built only with PETSc) uses
+these settings at R = 0.97 with ``vE_mode = sheath``, where CVODE stalls. The
 example ``examples/stellarator-1D/kriete-exb-drift-recycling`` and the test
 ``tests/integrated/1D-binormal-exb-drift-recycling`` check the particle and
 energy balance with recycling.

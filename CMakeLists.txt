@@ -389,6 +389,8 @@ if(HERMES_TESTS)
                              BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-binormal-exb-drift-sheath-potential CONFLICTS
                              BOUT_USE_METRIC_3D)
+  hermes_add_integrated_test(1D-binormal-exb-drift-newton REQUIRES BOUT_USE_PETSC
+                             CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-fluid CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling CONFLICTS BOUT_USE_METRIC_3D)
   hermes_add_integrated_test(1D-recycling-dthe CONFLICTS BOUT_USE_METRIC_3D)

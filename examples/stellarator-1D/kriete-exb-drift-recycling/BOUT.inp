@@ -70,6 +70,9 @@ Bnorm = 2.5    # [T]
 Tnorm = 100    # [eV]
 
 [solver]
+# CVODE with the band-block-diagonal preconditioner. This works up to R = 0.95
+# without drift; at higher recycling, or with v_E from the sheath potential,
+# use the Newton solver below (BOUT++ built with PETSc).
 mxstep = 100000
 atol = 1e-7
 rtol = 1e-5
@@ -79,6 +82,25 @@ mldq = 21
 mukeep = 21
 mlkeep = 21
 
+# Newton (backward Euler) steady-state solver. Replace the [solver] section
+# above with this one. See README.md, "Numerics".
+#
+# [solver]
+# type = beuler
+# equation_form = pseudo_transient   # Local pseudo-timesteps towards steady state
+# snes_type = newtonls
+# ksp_type = gmres
+# matrix_free_operator = true   # Exact Jacobian-vector products: in sheath mode
+#                               # v_E couples every cell to the target cells
+# pc_type = lu                  # LU of the coloured finite-difference Jacobian.
+#                               # On several processors: pc_type = bjacobi, and
+#                               # sub_pc_type = lu in a [petsc] section
+# lag_jacobian = 5
+# max_nonlinear_iterations = 10
+# max_snes_failures = 100
+# atol = 1e-11   # Must be well below the size of the right-hand side, or
+# rtol = 1e-8    # the solver stops short of the steady state
+
 [drift]
 # Parameters of the drift (not a component)
 vE = 66     # Binormal ExB velocity [m/s]. Positive towards the upper target.
@@ -86,6 +108,10 @@ vE = 66     # Binormal ExB velocity [m/s]. Positive towards the upper target.
 [binormal_exb_drift]
 Theta = mesh:Theta
 vE = drift:vE
+# v_E from the sheath potential instead (remove the drift section and
+# the vE line above). lambda = 1.439 m gives v_E = 66 m/s at R = 0.9.
+#vE_mode = sheath
+#potential_decay_length = 1.439   # [m]
 diagnose = true
 
 [sheath_boundary_simple]
