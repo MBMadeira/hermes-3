@@ -98,3 +98,38 @@ simple sheath at the same resolution is steady. In the isothermal benchmark
 (5/3 T_i in the Bohm speed), which gives a supersonic layer of two cells there;
 the solution between the targets is close to Kriete's (n_upper/n_lower = 1.632,
 stagnation point 0.668 at ny = 200).
+
+## v_E from the sheath potential
+
+With `binormal_exb_drift:vE_mode = sheath`, v_E = ±φ/(B λ_φ) is set by the
+radial electric field φ/λ_φ of the sheath potential: φ is the zero-current
+sheath potential (as in `sheath_boundary_simple`, with the Bohm ion flux) in
+the cells next to the targets, averaged over the two targets, and λ_φ is the
+radial decay length of the potential (`potential_decay_length`). v_E is uniform
+along the field line and follows the target plasma in time. See the commented
+lines in `[binormal_exb_drift]` in `BOUT.inp`.
+
+Here λ_φ = 1.136 m was chosen so that the steady state with constant
+v_E = 66 m/s gives v_E = 66 m/s (φ ≈ 187 V at T_e ≈ 76 eV, B = 2.5 T). With
+that λ_φ, the sheath-mode run reaches the same steady state (profiles within
+5×10⁻⁵, v_E = 66.00 m/s after a few outputs). Changing the power, at fixed
+λ_φ (ny = 200, simple sheath):
+
+| Power (both species) | v_E mode | v_E [m/s] | γ | T_e lower / upper [eV] | n_upper / n_lower |
+| --- | --- | --- | --- | --- | --- |
+| 0.6×10⁸ W/m² | constant | 66 | 0.32 | 35.6 / 33.4 | 1.37 |
+| 0.6×10⁸ W/m² | sheath | 29.7 | 0.14 | 35.6 / 33.5 | 1.05 |
+| 1.2×10⁸ W/m² | constant | 66 | 0.23 | 77.0 / 75.4 | 1.616 |
+| 1.2×10⁸ W/m² | sheath | 66.0 | 0.23 | 77.0 / 75.4 | 1.616 |
+| 2.4×10⁸ W/m² | constant | 66 | 0.18 | 152.6 / 147.8 | 1.44 |
+| 2.4×10⁸ W/m² | sheath | 133.2 | 0.35 | 159.1 / 149.5 | 2.13 |
+
+With constant v_E, γ = v_E/(2 c_s Θ) grows as the plasma cools; with v_E from
+the sheath potential, v_E ∝ T_e at the targets and γ ∝ √T_e, so the drift
+asymmetry grows with power instead. At half power the upper target is
+supersonic (u/c_s ≈ 1.3–1.5 in the last cell) and the asymmetry is below
+Kriete's isothermal estimate in both modes.
+
+The decay length needed for v_E ≈ 66 m/s with Θ = 10⁻³ is about 1 m; for a
+decay length of a few cm, v_E from this formula is tens of times larger and
+γ ≫ 1. The values of λ_φ and Θ (and B) therefore need to be chosen together.

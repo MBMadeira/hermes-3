@@ -1432,6 +1432,42 @@ pitch then acts like a flux-tube area. ``vE`` should be constant: a
 the compensating radial divergence of the incompressible E×B flow is not
 included.
 
+v_E from the sheath potential
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``vE_mode = sheath`` (default ``constant``), :math:`v_E` is set by the
+radial electric field due to the sheath potential, :math:`E_r = \phi/\lambda_\phi`:
+
+.. math::
+
+   v_E = \pm\frac{\phi}{B \lambda_\phi}, \qquad
+   \phi = T_e \ln\left(\sqrt{\frac{T_e}{2\pi m_e}}\,
+   \frac{(1 - G_e)\, n_e}{\sum_i Z_i n_i c_{s,i}}\right)
+
+where :math:`\phi` is the zero-current sheath potential, evaluated as in
+``sheath_boundary_simple`` with the Bohm ion flux in the cells next to the
+targets. By default the mean of the two targets is used. :math:`v_E` is the
+same everywhere along the field line, so the drift stays incompressible in 1D,
+and it follows the target plasma in time. The sheath components and
+``recycling`` (with ``exb_drift``) use the same :math:`v_E`.
+
+.. code-block:: ini
+
+   [binormal_exb_drift]
+   Theta = mesh:Theta
+   vE_mode = sheath
+   potential_decay_length = 0.02   # lambda_phi [m]
+   vE_direction = 1                # +1 towards the upper target, -1 towards the lower
+   # B = 2.5                       # [T], default Bnorm
+   # sheath_potential = mean       # or lower, upper
+   # secondary_electron_coef = 0, sheath_ion_polytropic = 1 (as in the sheath)
+
+With ``diagnose = true`` this also saves ``vE_binormal_exb_drift`` [m/s] and
+the sheath potentials ``phi_sheath_lower_binormal_exb_drift`` and
+``phi_sheath_upper_binormal_exb_drift`` [V]. The test
+``tests/integrated/1D-binormal-exb-drift-sheath-potential`` compares it with a
+constant :math:`v_E`.
+
 The example ``examples/stellarator-1D/kriete-exb-drift`` (isothermal)
 reproduces Kriete's analytic solution (target density asymmetry
 :math:`n_{upper}/n_{lower} = (1+\gamma)/(1-\gamma)`, stagnation point

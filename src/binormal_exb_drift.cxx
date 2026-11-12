@@ -6,24 +6,21 @@
 #include "../include/hermes_utils.hxx"
 #include "../include/permissions.hxx"
 
+#include <bout/boutcomm.hxx>
 #include <bout/boutexception.hxx>
 #include <bout/constants.hxx>
 #include <bout/difops.hxx>
 #include <bout/field3d.hxx>
 #include <bout/fv_ops.hxx>
+#include <bout/mesh.hxx>
 #include <bout/output_bout_types.hxx>
 
+#include <cmath>
 #include <string>
 
 BinormalExBSettings readBinormalExBSettings(Options& options, const Options& units) {
   // Reference sound speed [m/s]: rho_s0 * Omega_ci
   const BoutReal Cs0 = get<BoutReal>(units["meters"]) / get<BoutReal>(units["seconds"]);
-
-  const Field3D vE =
-      options["vE"]
-          .doc("Binormal ExB drift velocity [m/s]. Positive is towards increasing y "
-               "(the upper target)")
-          .withDefault(Field3D(0.0));
 
   const Field3D Theta =
       options["Theta"]
@@ -35,13 +32,184 @@ BinormalExBSettings readBinormalExBSettings(Options& options, const Options& uni
                         min(Theta, true, "RGN_ALL"));
   }
 
-  return {vE / (Theta * Cs0),
-          options["momentum_advection"]
-              .doc("Advect parallel momentum with the binormal drift?")
-              .withDefault<bool>(true),
-          options["energy_advection"]
-              .doc("Advect internal energy (3/2 p) with the binormal drift?")
-              .withDefault<bool>(true)};
+  BinormalExBSettings settings;
+  settings.momentum_advection =
+      options["momentum_advection"]
+          .doc("Advect parallel momentum with the binormal drift?")
+          .withDefault<bool>(true);
+  settings.energy_advection =
+      options["energy_advection"]
+          .doc("Advect internal energy (3/2 p) with the binormal drift?")
+          .withDefault<bool>(true);
+
+  const std::string mode =
+      options["vE_mode"]
+          .doc("How the binormal ExB velocity is set: 'constant' (input vE) or "
+               "'sheath' (from the sheath potential at the targets)")
+          .withDefault<std::string>("constant");
+
+  if (mode == "constant") {
+    settings.mode = BinormalExBSettings::Mode::constant;
+    const Field3D vE =
+        options["vE"]
+            .doc("Binormal ExB drift velocity [m/s]. Positive is towards increasing y "
+                 "(the upper target)")
+            .withDefault(Field3D(0.0));
+    settings.W = vE / (Theta * Cs0);
+    return settings;
+  }
+  if (mode != "sheath") {
+    throw BoutException("binormal ExB drift: vE_mode must be 'constant' or 'sheath', "
+                        "not '{:s}'",
+                        mode);
+  }
+
+  settings.mode = BinormalExBSettings::Mode::sheath;
+  settings.inv_Theta_Cs0 = 1. / (Theta * Cs0);
+  settings.W = 0.0 * Theta; // Set in update()
+  settings.Tnorm = get<BoutReal>(units["eV"]);
+
+  const BoutReal lambda =
+      options["potential_decay_length"]
+          .doc("Radial decay length of the potential [m]: E_r = phi_sheath / lambda")
+          .as<BoutReal>();
+  if (!(lambda > 0.0)) {
+    throw BoutException("binormal ExB drift: potential_decay_length must be > 0 ({:e})",
+                        lambda);
+  }
+  const BoutReal direction =
+      options["vE_direction"]
+          .doc("Direction of v_E: +1 towards increasing y (the upper target), -1 "
+               "towards the lower target")
+          .withDefault<BoutReal>(1.0);
+  if (std::abs(std::abs(direction) - 1.0) > 1e-12) {
+    throw BoutException("binormal ExB drift: vE_direction must be +1 or -1 ({:e})",
+                        direction);
+  }
+  const BoutReal B = options["B"]
+                         .doc("Magnetic field [T] in v_E = phi / (B lambda)")
+                         .withDefault<BoutReal>(get<BoutReal>(units["Tesla"]));
+  settings.vE_per_volt = direction / (B * lambda);
+
+  const std::string reference =
+      options["sheath_potential"]
+          .doc("Sheath potential that sets v_E: 'mean' of the two targets, 'lower' "
+               "or 'upper'")
+          .withDefault<std::string>("mean");
+  if (reference == "mean") {
+    settings.reference = BinormalExBSettings::Reference::mean;
+  } else if (reference == "lower") {
+    settings.reference = BinormalExBSettings::Reference::lower;
+  } else if (reference == "upper") {
+    settings.reference = BinormalExBSettings::Reference::upper;
+  } else {
+    throw BoutException("binormal ExB drift: sheath_potential must be 'mean', 'lower' "
+                        "or 'upper', not '{:s}'",
+                        reference);
+  }
+
+  settings.secondary_electron_coef =
+      options["secondary_electron_coef"]
+          .doc("Secondary electron emission coefficient in the sheath potential")
+          .withDefault<BoutReal>(0.0);
+  settings.ion_polytropic =
+      options["sheath_ion_polytropic"]
+          .doc("Ion polytropic coefficient in the Bohm speed for the sheath potential")
+          .withDefault<BoutReal>(1.0);
+  return settings;
+}
+
+std::vector<Permissions::VarRights> BinormalExBSettings::statePermissions() const {
+  if (mode != Mode::sheath) {
+    return {};
+  }
+  return {readOnly("species:e:density", Regions::Interior),
+          readOnly("species:e:temperature", Regions::Interior),
+          readOnly("species:{ions}:density", Regions::Interior),
+          readOnly("species:{ions}:temperature", Regions::Interior),
+          readOnly("species:{ions}:AA"),
+          readOnly("species:{ions}:charge")};
+}
+
+void BinormalExBSettings::update(GuardedOptions& state) {
+  if (mode != Mode::sheath) {
+    return;
+  }
+  Mesh* mesh = W.getMesh();
+  GuardedOptions allspecies = state["species"];
+  GuardedOptions electrons = allspecies["e"];
+  const Field3D Ne = getNoBoundary<Field3D>(electrons["density"]);
+  const Field3D Te = getNoBoundary<Field3D>(electrons["temperature"]);
+
+  // Ion species: density, temperature, mass and charge
+  struct Ion {
+    Field3D N, T;
+    BoutReal AA, Z;
+  };
+  std::vector<Ion> ions;
+  for (auto& kv : allspecies.getChildren()) {
+    if (identifySpeciesType(kv.first) != SpeciesType::ion) {
+      continue;
+    }
+    GuardedOptions species = allspecies[kv.first];
+    ions.push_back({getNoBoundary<Field3D>(species["density"]),
+                    getNoBoundary<Field3D>(species["temperature"]),
+                    get<BoutReal>(species["AA"]), get<BoutReal>(species["charge"])});
+  }
+
+  const BoutReal Me = SI::Me / SI::Mp;
+
+  // Zero-current sheath potential in the cell (x, y, z), as in
+  // sheath_boundary_simple with the Bohm ion flux
+  auto sheath_potential = [&](int jx, int jy, int jz) {
+    BoutReal ion_sum = 0.0;
+    for (const auto& ion : ions) {
+      const BoutReal ti = floor(ion.T(jx, jy, jz), 1e-5);
+      const BoutReal te = floor(Te(jx, jy, jz), 1e-5);
+      ion_sum +=
+          ion.Z * ion.N(jx, jy, jz) * sqrt((ion_polytropic * ti + ion.Z * te) / ion.AA);
+    }
+    const BoutReal te = floor(Te(jx, jy, jz), 1e-5);
+    return te
+           * log(sqrt(te / (Me * TWOPI)) * (1. - secondary_electron_coef)
+                 * floor(Ne(jx, jy, jz), 1e-5) / floor(ion_sum, 1e-5));
+  };
+
+  // Sum of potentials and number of cells next to each target
+  BoutReal local[4] = {0.0, 0.0, 0.0, 0.0};
+  for (RangeIterator r = mesh->iterateBndryLowerY(); !r.isDone(); r++) {
+    for (int jz = 0; jz < mesh->LocalNz; jz++) {
+      local[0] += sheath_potential(r.ind, mesh->ystart, jz);
+      local[1] += 1.0;
+    }
+  }
+  for (RangeIterator r = mesh->iterateBndryUpperY(); !r.isDone(); r++) {
+    for (int jz = 0; jz < mesh->LocalNz; jz++) {
+      local[2] += sheath_potential(r.ind, mesh->yend, jz);
+      local[3] += 1.0;
+    }
+  }
+  BoutReal global[4];
+  MPI_Allreduce(local, global, 4, MPI_DOUBLE, MPI_SUM, BoutComm::get());
+  if ((global[1] == 0.0) or (global[3] == 0.0)) {
+    throw BoutException("binormal ExB drift: vE_mode = sheath needs targets at both "
+                        "y boundaries");
+  }
+  phi_lower = Tnorm * global[0] / global[1]; // [V]
+  phi_upper = Tnorm * global[2] / global[3];
+
+  BoutReal phi = 0.5 * (phi_lower + phi_upper);
+  if (reference == Reference::lower) {
+    phi = phi_lower;
+  } else if (reference == Reference::upper) {
+    phi = phi_upper;
+  }
+  vE = vE_per_volt * phi;
+
+  // Keep W's location and y direction (sheath components store it aligned).
+  // Sheath mode is for 1D models, where aligned and non-aligned indices are
+  // the same
+  BOUT_FOR(i, W.getRegion("RGN_ALL")) { W[i] = vE * inv_Theta_Cs0[i]; }
 }
 
 BinormalExBDrift::BinormalExBDrift(std::string name, Options& alloptions,
@@ -62,10 +230,24 @@ BinormalExBDrift::BinormalExBDrift(std::string name, Options& alloptions,
   settings = readBinormalExBSettings(options, alloptions["units"]);
   abs_W = abs(settings.W);
 
+  // With v_E set by the sheath potential, the target plasma is read too. Ion
+  // density is already read in the whole domain.
+  for (const auto& permission : settings.statePermissions()) {
+    if (permission.name != "species:{ions}:density") {
+      setPermissions(permission);
+    }
+  }
+
   diagnose = options["diagnose"].doc("Output diagnostics?").withDefault<bool>(false);
 }
 
 void BinormalExBDrift::transform_impl(GuardedOptions& state) {
+  if (settings.selfConsistent()) {
+    // v_E from the sheath potentials of the current state
+    settings.update(state);
+    abs_W = abs(settings.W);
+  }
+
   GuardedOptions allspecies = state["species"];
   const Field3D& W = settings.W;
 
@@ -143,12 +325,44 @@ void BinormalExBDrift::outputVars(Options& state) {
   const auto rho_s0 = get<BoutReal>(state["rho_s0"]);
   const std::string& name = objectName();
 
-  set_with_attrs(state[std::string("w_") + name], settings.W,
-                 {{"units", "m / s"},
-                  {"conversion", Cs0},
-                  {"standard_name", "effective parallel drift velocity"},
-                  {"long_name", "Binormal ExB velocity divided by field line pitch"},
-                  {"source", "binormal_exb_drift"}});
+  if (settings.selfConsistent()) {
+    // Time-dependent v_E set by the sheath potential
+    set_with_attrs(state[std::string("w_") + name], settings.W,
+                   {{"time_dimension", "t"},
+                    {"units", "m / s"},
+                    {"conversion", Cs0},
+                    {"standard_name", "effective parallel drift velocity"},
+                    {"long_name", "Binormal ExB velocity divided by field line pitch"},
+                    {"source", "binormal_exb_drift"}});
+    set_with_attrs(state[std::string("vE_") + name], settings.vE,
+                   {{"time_dimension", "t"},
+                    {"units", "m / s"},
+                    {"conversion", 1.0},
+                    {"standard_name", "binormal ExB velocity"},
+                    {"long_name", "Binormal ExB velocity from the sheath potential"},
+                    {"source", "binormal_exb_drift"}});
+    set_with_attrs(state[std::string("phi_sheath_lower_") + name], settings.phi_lower,
+                   {{"time_dimension", "t"},
+                    {"units", "V"},
+                    {"conversion", 1.0},
+                    {"standard_name", "sheath potential"},
+                    {"long_name", "Sheath potential at the lower target"},
+                    {"source", "binormal_exb_drift"}});
+    set_with_attrs(state[std::string("phi_sheath_upper_") + name], settings.phi_upper,
+                   {{"time_dimension", "t"},
+                    {"units", "V"},
+                    {"conversion", 1.0},
+                    {"standard_name", "sheath potential"},
+                    {"long_name", "Sheath potential at the upper target"},
+                    {"source", "binormal_exb_drift"}});
+  } else {
+    set_with_attrs(state[std::string("w_") + name], settings.W,
+                   {{"units", "m / s"},
+                    {"conversion", Cs0},
+                    {"standard_name", "effective parallel drift velocity"},
+                    {"long_name", "Binormal ExB velocity divided by field line pitch"},
+                    {"source", "binormal_exb_drift"}});
+  }
 
   for (const auto& [species_name, source] : particle_source) {
     set_with_attrs(state[std::string("S") + species_name + std::string("_exb")], source,

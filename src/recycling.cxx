@@ -48,6 +48,10 @@ Recycling::Recycling(std::string name, Options& alloptions, Solver*)
   use_exb_drift = !exb_drift_name.empty();
   if (use_exb_drift) {
     exb = readBinormalExBSettings(alloptions[exb_drift_name], units);
+    // With v_E set by the sheath potential, the target plasma is read too
+    for (const auto& permission : exb.statePermissions()) {
+      setPermissions(permission);
+    }
   } else {
     exb.W = Field3D(0.0);
   }
@@ -206,6 +210,8 @@ Recycling::Recycling(std::string name, Options& alloptions, Solver*)
 }
 
 void Recycling::transform_impl(GuardedOptions& state) {
+  // With v_E set by the sheath potential, update the drift velocity
+  exb.update(state);
 
   // Get metric tensor components
   Coordinates* coord = mesh->getCoordinates();

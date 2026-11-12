@@ -168,6 +168,9 @@ SheathBoundarySimple::SheathBoundarySimple(std::string name, Options& alloptions
 }
 
 void SheathBoundarySimple::transform_impl(GuardedOptions& state) {
+  // With v_E set by the sheath potential, update the drift velocity from the
+  // current state (the plasma in the cells next to the targets)
+  exb.update(state);
 
   GuardedOptions allspecies = state["species"];
   GuardedOptions electrons = allspecies["e"];

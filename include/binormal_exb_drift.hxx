@@ -4,11 +4,14 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <bout/field3d.hxx>
 #include <bout/options.hxx>
 
 #include "component.hxx"
+#include "guarded_options.hxx"
+#include "permissions.hxx"
 
 /// Settings of a binormal ExB drift in a 1D island SOL model
 ///
@@ -21,10 +24,58 @@
 ///     w = v_E / Theta
 ///
 /// See Kriete et al., Nucl. Fusion 63 (2023) 026022, eqs (5) and (7).
+///
+/// v_E is either an input (mode constant), or set by the sheath potential
+/// (mode sheath): the radial electric field in the SOL is E_r = phi / lambda,
+/// where phi is the potential drop across the sheath and lambda its radial
+/// decay length, so that
+///
+///     v_E = direction * phi / (B lambda)
+///
+/// with phi the zero-current (floating) sheath potential at the targets,
+/// evaluated as in sheath_boundary_simple with the Bohm ion flux:
+///
+///     phi = Te ln( sqrt(Te / (2 pi me)) (1 - Ge) ne / sum_i Z_i n_i c_si )
+///
+/// in the cells next to the targets. v_E is uniform along the field line, so
+/// that the drift remains incompressible in 1D; it follows the target
+/// conditions in time.
 struct BinormalExBSettings {
   Field3D W;                      ///< w = v_E / Theta, normalised to Cs0
   bool momentum_advection{false}; ///< Advect parallel momentum with the drift?
   bool energy_advection{false};   ///< Advect internal energy with the drift?
+
+  /// How v_E is set
+  enum class Mode { constant, sheath };
+  Mode mode{Mode::constant};
+
+  /// Which target sheath potential sets v_E in sheath mode
+  enum class Reference { mean, lower, upper };
+  Reference reference{Reference::mean};
+
+  // Sheath mode parameters
+  Field3D inv_Theta_Cs0;     ///< 1 / (Theta Cs0) [s/m]: W = v_E * inv_Theta_Cs0
+  BoutReal vE_per_volt{0.0}; ///< direction / (B lambda) [m/s per V]
+  BoutReal secondary_electron_coef{0.0}; ///< Ge in the sheath potential
+  BoutReal ion_polytropic{1.0};          ///< Ion polytropic index in the Bohm speed
+  BoutReal Tnorm{1.0};                   ///< Temperature (potential) normalisation [eV]
+
+  // Values from the last update() in sheath mode
+  BoutReal vE{0.0};        ///< Binormal ExB velocity [m/s]
+  BoutReal phi_lower{0.0}; ///< Sheath potential at the lower target [V]
+  BoutReal phi_upper{0.0}; ///< Sheath potential at the upper target [V]
+
+  /// Is v_E set by the plasma (sheath mode)?
+  bool selfConsistent() const { return mode == Mode::sheath; }
+
+  /// In sheath mode, set v_E and W from the sheath potentials of the plasma in
+  /// `state`. Does nothing in constant mode. Must be called on all processors
+  /// (the target values are shared between processors).
+  void update(GuardedOptions& state);
+
+  /// State variables read by update(), for components that do not already
+  /// read them. Empty in constant mode.
+  std::vector<Permissions::VarRights> statePermissions() const;
 
   /// Energy flux through a target carried by the binormal_exb_drift component,
   /// for a species with temperature T, density n, parallel velocity vpar and
@@ -50,11 +101,23 @@ struct BinormalExBSettings {
 /// Read the binormal ExB drift settings from an options section
 ///
 /// Reads:
-///   - vE                  Binormal ExB velocity [m/s]. Positive is towards
-///                         increasing y (the upper target). Should be constant:
-///                         a vE varying along y makes the drift compressible in
-///                         1D (the compensating radial ExB divergence of the
-///                         incompressible 2D drift is not included).
+///   - vE_mode             How v_E is set: "constant" (default; input vE) or
+///                         "sheath" (from the target sheath potentials)
+///   - vE                  constant mode: Binormal ExB velocity [m/s]. Positive
+///                         is towards increasing y (the upper target). Should
+///                         be constant: a vE varying along y makes the drift
+///                         compressible in 1D (the compensating radial ExB
+///                         divergence of the incompressible 2D drift is not
+///                         included).
+///   - potential_decay_length  sheath mode: radial decay length lambda of the
+///                         potential [m], so that E_r = phi / lambda
+///   - vE_direction        sheath mode: +1 (default) for v_E towards the upper
+///                         target, -1 towards the lower target
+///   - B                   sheath mode: magnetic field [T]. Default Bnorm
+///   - sheath_potential    sheath mode: "mean" (default) of the two targets,
+///                         "lower" or "upper"
+///   - secondary_electron_coef, sheath_ion_polytropic  sheath mode: as in
+///                         sheath_boundary_simple. Defaults 0 and 1
 ///   - Theta               Field line pitch inside the island. May depend on y
 ///                         only on an island-poloidal grid (g^22 = Theta^2 with
 ///                         the same Theta); on a parallel-length grid
@@ -96,7 +159,9 @@ struct BinormalExBDrift : public NamedComponent<BinormalExBDrift> {
   /// # Inputs
   ///
   /// - <name>
-  ///   - vE                  Binormal ExB velocity [m/s]
+  ///   - vE_mode             "constant" (default) or "sheath"; see
+  ///                         readBinormalExBSettings for the sheath mode options
+  ///   - vE                  Binormal ExB velocity [m/s] (constant mode)
   ///   - Theta               Field line pitch
   ///   - momentum_advection  Include the momentum advection term? Default true
   ///   - energy_advection    Include the energy advection term? Default true

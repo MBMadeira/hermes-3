@@ -72,6 +72,12 @@ vE = 66     # Binormal ExB velocity [m/s]. Positive towards the upper target.
 Theta = mesh:Theta
 vE = drift:vE
 diagnose = true
+# For v_E set by the sheath potential, v_E = phi_sheath / (B lambda), replace
+# "vE = drift:vE" by the lines below (and remove the [drift] section). With
+# lambda = 1.136 m this gives v_E = 66 m/s at the steady state of this case.
+#vE_mode = sheath
+#potential_decay_length = 1.136   # Radial decay length of the potential [m]
+#vE_direction = 1                 # +1: towards the upper target
 
 [sheath_boundary_simple]
 # Apply the Bohm condition to v_par + v_E / Theta

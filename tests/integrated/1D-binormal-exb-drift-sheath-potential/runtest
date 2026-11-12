@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+
+# Binormal ExB drift with v_E set by the sheath potential
+# (binormal_exb_drift:vE_mode = sheath), compared with a constant v_E.
+#
+# 1D island SOL with evolving pressure and the simple sheath at both targets,
+# no recycling. In sheath mode v_E = phi / (B lambda), with phi the mean of
+# the zero-current sheath potentials at the two targets. Checks that
+#   - the sheath potentials output by the code are the zero-current potentials
+#     of the plasma in the cells next to the targets, with the Bohm ion flux
+#   - with lambda chosen so that the constant-v_E steady state gives the same
+#     v_E, the sheath-mode run reaches that same steady state (fixed point)
+#   - at half the power, v_E follows the colder targets (v_E = phi / (B lambda)
+#     with a smaller phi), and the target asymmetry is weaker
+#   - the right-hand side is the same on 1 and 2 processors
+
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+from boutdata import restart
+from boutdata.collect import collect
+from boututils.run_wrapper import launch_safe
+
+vE = 66.0  # [m/s] in data/BOUT.inp
+B = 2.5  # Magnetic field [T] (Bnorm in data/BOUT.inp)
+
+QE = 1.602176634e-19
+MP = 1.67262192595e-27
+ME = 9.1093837139e-31
+AA = 1.0  # Ion mass number in data/BOUT.inp
+
+potential_tolerance = 1e-6
+fixed_point_tolerance = 2e-3  # Both runs are steady to ~2e-4 per output
+mpi_tolerance = 1e-10
+
+hermes_candidates = [Path("../../../hermes-3"), Path("../../../build/hermes-3")]
+hermes_exec = next((path for path in hermes_candidates if path.exists()), None)
+if hermes_exec is None:
+    raise FileNotFoundError("Could not find hermes-3 executable in repo root or build/")
+
+run_root = Path("runs")
+constant_input = Path("data/BOUT.inp").read_text()
+
+
+def sheath_input(potential_decay_length):
+    """The input with v_E from the sheath potential"""
+    text = constant_input
+    drift = text[text.index("[drift]") : text.index("[binormal_exb_drift]")]
+    text = text.replace(drift, "")
+    old = "[binormal_exb_drift]\nTheta = mesh:Theta\nvE = drift:vE\n"
+    assert old in text
+    return text.replace(
+        old,
+        "[binormal_exb_drift]\nTheta = mesh:Theta\nvE_mode = sheath\n"
+        f"potential_decay_length = {float(potential_decay_length):.12g}\n",
+    )
+
+
+def prepare(name, text):
+    case_dir = run_root / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True)
+    (case_dir / "BOUT.inp").write_text(text)
+    return case_dir
+
+
+def launch(case_dir, args="", nproc=1):
+    print(f"Running {case_dir} {args} on {nproc} processor(s)")
+    status, out = launch_safe(
+        f"{hermes_exec} -d {case_dir} {args}", nproc=nproc, pipe=True
+    )
+    (case_dir / "run.log").write_text(out)
+    if status != 0:
+        raise RuntimeError(f"Hermes run failed for {case_dir}")
+
+
+def get(case_dir, var, it=-1):
+    """Variable in SI units at output it"""
+    data = collect(var, path=str(case_dir), info=False)
+    conversion = float(data.attributes.get("conversion", 1.0))
+    values = np.asarray(data).squeeze() * conversion
+    return values[it] if values.ndim >= 1 and values.shape[0] > 1 else values
+
+
+def sheath_potentials(case_dir):
+    """Zero-current sheath potentials [V] in the cells next to the targets"""
+    Te = get(case_dir, "Te")
+    Ti = get(case_dir, "Ti")
+
+    def phi(k):
+        cs = np.sqrt((Ti[k] + Te[k]) * QE / (AA * MP))
+        return Te[k] * np.log(np.sqrt(Te[k] * QE / (2 * np.pi * ME)) / cs)
+
+    return phi(0), phi(-1)
+
+
+failures = []
+
+
+def check(name, value, ok):
+    print(f"    {name}: {value} -> {'Passed' if ok else 'Failed'}")
+    if not ok:
+        failures.append(name)
+
+
+# Constant v_E
+constant = prepare("constant", constant_input)
+launch(constant)
+phi_lower, phi_upper = sheath_potentials(constant)
+# Decay length that gives the same v_E at the constant-v_E steady state
+lam = 0.5 * (phi_lower + phi_upper) / (B * vE)
+print(
+    f"  constant v_E = {vE} m/s: phi = {phi_lower:.2f}, {phi_upper:.2f} V -> lambda = {lam:.5f} m"
+)
+
+# v_E from the sheath potential, same decay length
+sheath = prepare("sheath", sheath_input(lam))
+launch(sheath)
+print("  v_E from the sheath potential")
+code_lower = get(sheath, "phi_sheath_lower_binormal_exb_drift")
+code_upper = get(sheath, "phi_sheath_upper_binormal_exb_drift")
+expected_lower, expected_upper = sheath_potentials(sheath)
+error = max(abs(code_lower / expected_lower - 1), abs(code_upper / expected_upper - 1))
+check(
+    "sheath potentials",
+    f"{code_lower:.3f}, {code_upper:.3f} V (expected {expected_lower:.3f}, "
+    f"{expected_upper:.3f}; rel. error {error:.1e})",
+    error < potential_tolerance,
+)
+vE_sheath = get(sheath, "vE_binormal_exb_drift")
+check(
+    "v_E = mean phi / (B lambda)",
+    f"{vE_sheath:.4f} m/s",
+    abs(vE_sheath / (0.5 * (code_lower + code_upper) / (B * lam)) - 1) < 1e-10,
+)
+differences = {
+    k: np.max(np.abs(get(sheath, k) - get(constant, k)))
+    / np.max(np.abs(get(constant, k)))
+    for k in ["Ni", "Pi", "Pe", "NVi"]
+}
+check(
+    "same steady state as constant v_E (fixed point)",
+    f"v_E {vE_sheath:.3f} m/s; profiles "
+    + ", ".join(f"{k} {v:.1e}" for k, v in differences.items()),
+    abs(vE_sheath / vE - 1) < fixed_point_tolerance
+    and max(differences.values()) < fixed_point_tolerance,
+)
+
+# Half the power, same decay length: v_E follows the colder targets
+half = prepare(
+    "sheath_half_power",
+    sheath_input(lam).replace("powerflux = 6e7", "powerflux = 3e7"),
+)
+launch(half)
+vE_half = get(half, "vE_binormal_exb_drift")
+phi_half = 0.5 * (
+    get(half, "phi_sheath_lower_binormal_exb_drift")
+    + get(half, "phi_sheath_upper_binormal_exb_drift")
+)
+ratio_full = get(sheath, "Ni")[-1] / get(sheath, "Ni")[0]
+ratio_half = get(half, "Ni")[-1] / get(half, "Ni")[0]
+check(
+    "half power: lower v_E and weaker asymmetry",
+    f"v_E {vE_half:.2f} m/s (phi {phi_half:.1f} V); n_upper/n_lower "
+    f"{ratio_half:.3f} vs {ratio_full:.3f} at full power",
+    vE_half < 0.8 * vE_sheath and 1.0 < ratio_half < ratio_full,
+)
+
+# Right-hand side at the sheath-mode steady state on 1 and 2 processors
+names = ["Ni", "Pi", "Pe", "NVi"]
+rhs = {}
+for nproc in [1, 2]:
+    case_dir = prepare(f"rhs_np{nproc}", sheath_input(lam))
+    restart.redistribute(nproc, path=str(sheath), output=str(case_dir), myg=2)
+    launch(case_dir, "restart nout=1 timestep=1e-4", nproc)
+    rhs[nproc] = {
+        k: np.asarray(collect(f"ddt({k})", path=str(case_dir), info=False))[-1].ravel()
+        for k in names
+    }
+worst = max(
+    np.max(np.abs(rhs[2][k] - rhs[1][k])) / np.max(np.abs(rhs[1][k])) for k in names
+)
+check("right-hand side on 1 vs 2 processors", f"{worst:.1e}", worst < mpi_tolerance)
+
+if failures:
+    print(f"\n => Failed: {', '.join(failures)}")
+    sys.exit(1)
+
+print("\n => All passed")
+sys.exit(0)
