@@ -191,6 +191,15 @@ from the lower y boundary, in m) to a point upstream of both fronts, e.g.
 ``mesh:length / 2``. The search then runs from ``upstream_position`` towards the
 chosen target, and the front location is the distance from that target.
 
+With ``front_temperature`` (in eV) the front is instead the first point,
+searching from ``upstream_position`` towards the target, where the electron
+temperature falls below that value. This is useful when the cold region at the
+target stays dense, so that the neutral density never exceeds the electron
+density. For example, in the 1D island case with all ions recycled, atoms pumped
+next to the targets (``simple_pump``) and 2% nitrogen, the region below 5 eV
+grows smoothly from 70 to 880 m as the core particle source is raised 8-fold,
+while :math:`n_N/n_e` stays below 0.35.
+
 We define the detachment front as the point where the neutral density
 (``N_neutral_species``) becomes larger than the electron density
 (``Ne``). There’s lots of other (better) definitions, but this one is
@@ -333,6 +342,10 @@ Input Parameters
 -  **``upstream_position``**: Where the search for the front starts, as
    distance from the lower y boundary in metres. Default: the boundary
    opposite the target.
+
+-  **``front_temperature``**: If > 0, the front is where the electron
+   temperature falls below this value [eV] instead of where
+   :math:`n_N > n_e`. Default 0.
 
 -  **``neutral_species``**: Indicates the main neutral species in the
    plasma. This species is used to determine the location of the

@@ -40,9 +40,20 @@ void DetachmentController::transform_impl(GuardedOptions& state) {
     Field3D electron_density = getNoBoundary<Field3D>(state["species"]["e"]["density"]);
     Coordinates *coord = mesh->getCoordinates();
 
-    if (front_at_lower_target or (upstream_position > 0.0)) {
+    if (front_at_lower_target or (upstream_position > 0.0) or (front_temperature > 0.0)) {
       // Search from upstream_position towards the chosen target. Positions are
       // cell centres, measured from the lower y boundary.
+      // The front is where f > 0 first: f = Nn - Ne, or front_temperature - Te
+      Field3D electron_temperature;
+      if (front_temperature > 0.0) {
+        electron_temperature =
+            getNoBoundary<Field3D>(state["species"]["e"]["temperature"]);
+      }
+      const auto f = [&](int j) {
+        return (front_temperature > 0.0)
+                   ? front_temperature - electron_temperature(0, j, 0)
+                   : neutral_density(0, j, 0) - electron_density(0, j, 0);
+      };
       const int ncells = mesh->yend - mesh->ystart + 1;
       std::vector<BoutReal> position(ncells);
       BoutReal start_of_cell = 0.0;
@@ -59,25 +70,22 @@ void DetachmentController::transform_impl(GuardedOptions& state) {
                                         : (position[k_start] < upstream_position))) {
         k_start += step;
       }
-      // If no point has Nn > Ne, the front is at the target
+      // If no point has f > 0, the front is at the target
       BoutReal front_position =
           front_at_lower_target ? position[0] : position[ncells - 1];
       for (int k = k_start; (k >= 0) and (k < ncells); k += step) {
         const int j = mesh->ystart + k;
-        if (neutral_density(0, j, 0) > electron_density(0, j, 0)) {
+        const BoutReal f2 = f(j);
+        if (f2 > 0.0) {
           if (k == k_start) {
             front_position = position[k];
           } else {
-            // Linear interpolation between the previous and the current point,
-            // as below
+            // Linear interpolation of f between the previous and the current
+            // point (for Nn - Ne the same as the intersection formula below)
             const BoutReal x1 = position[k - step];
-            const BoutReal a1 = neutral_density(0, j - step, 0);
-            const BoutReal b1 = electron_density(0, j - step, 0);
+            const BoutReal f1 = f(j - step);
             const BoutReal x2 = position[k];
-            const BoutReal a2 = neutral_density(0, j, 0);
-            const BoutReal b2 = electron_density(0, j, 0);
-            front_position =
-                ((x1 * b2 - b1 * x2) - (x1 * a2 - a1 * x2)) / ((a1 - a2) - (b1 - b2));
+            front_position = (x2 * f1 - x1 * f2) / (f1 - f2);
           }
           break;
         }
@@ -163,7 +171,8 @@ void DetachmentController::transform_impl(GuardedOptions& state) {
     }
 
     if ((time > settling_time) && ((time - previous_time) >= min_time_for_change) && (fabs(error - previous_error) >= min_error_for_change)) {
-        change_in_time = time - previous_time;
+        // previous_time is not known on the first step (e.g. after a restart)
+        change_in_time = first_step ? 0.0 : time - previous_time;
 
         if (time_buffer.size() >= buffer_size) {
             time_buffer.erase(time_buffer.begin());

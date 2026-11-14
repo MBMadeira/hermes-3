@@ -65,7 +65,8 @@ struct DetachmentController : public NamedComponent<DetachmentController> {
                           .as<std::string>();
 
     // Which target's detachment front to control. The front is the first point
-    // where the neutral density exceeds the electron density, searching from
+    // where the neutral density exceeds the electron density (or, with
+    // front_temperature, where T_e falls below it), searching from
     // upstream_position towards the target, and its location is the distance
     // from that target.
     const std::string target =
@@ -89,6 +90,21 @@ struct DetachmentController : public NamedComponent<DetachmentController> {
                  "with targets at both ends, set it upstream of both fronts, e.g. "
                  "mesh:length / 2.")
             .withDefault<BoutReal>(front_at_lower_target ? connection_length : 0.0);
+
+    // Alternative front definition: where the electron temperature falls below
+    // a threshold. Useful when the cold region at the target stays dense, so
+    // that the neutral density never exceeds the electron density.
+    front_temperature =
+        detachment_controller_options["front_temperature"]
+            .doc("If > 0, the front is the first point, searching from upstream_position "
+                 "towards the target, where the electron temperature falls below this "
+                 "value [eV]. Default 0: the first point where the neutral density "
+                 "exceeds the electron density.")
+            .withDefault<BoutReal>(0.0)
+        / Tnorm;
+    if (front_temperature > 0.0) {
+      setPermissions(readOnly("species:e:temperature", Regions::Interior));
+    }
 
     actuator =
         detachment_controller_options["actuator"]
@@ -316,6 +332,7 @@ private:
   BoutReal connection_length;
   bool front_at_lower_target{false}; ///< Control the front at the lower y target?
   BoutReal upstream_position{0.0};   ///< Search start, distance from lower boundary [m]
+  BoutReal front_temperature{0.0};   ///< Front where T_e < this (normalised); 0: Nn > Ne
   BoutReal detachment_front_setpoint;
   BoutReal min_time_for_change;
   BoutReal min_error_for_change;
